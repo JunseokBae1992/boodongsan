@@ -87,6 +87,12 @@ docker run -e REB_API_KEY=발급받은키 boodongsan python report.py --out /tmp
 대시보드 좌측에서 `STATBL_ID`, 주기(`DTACYCLE_CD`), 기간을 조정할 수 있습니다.
 기본값은 `A_2024_00045` (월간 아파트 매매가격지수), `MM`(월간)입니다.
 
+## 다른 사람도 볼 수 있게 공개(배포)
+
+인터넷 URL로 공유하려면 [DEPLOY.md](DEPLOY.md) 참고.
+가장 쉬운 방법은 **Streamlit Community Cloud**(무료): GitHub 레포 연결 +
+Secrets 에 `REB_API_KEY` 입력 → 공개 주소 자동 생성.
+
 ## 구성
 
 | 파일 | 설명 |

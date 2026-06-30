@@ -10,9 +10,10 @@
 
 from __future__ import annotations
 
+import os
+
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 import streamlit as st
 from dotenv import load_dotenv
 
@@ -26,6 +27,15 @@ from reb_api import (
 )
 
 load_dotenv()
+
+# Streamlit Community Cloud 등 배포 환경에서는 인증키를 Secrets로 넣는다.
+# st.secrets 에만 있고 환경변수에 없으면 환경변수로 옮겨준다(reb_api 가 os.environ 사용).
+if not os.environ.get("REB_API_KEY"):
+    try:
+        if "REB_API_KEY" in st.secrets:
+            os.environ["REB_API_KEY"] = str(st.secrets["REB_API_KEY"])
+    except Exception:
+        pass
 
 st.set_page_config(page_title="서울 자치구 부동산 지수", layout="wide")
 st.title("🏙️ 서울 자치구별 부동산 지수 분석")

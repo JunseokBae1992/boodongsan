@@ -15,10 +15,13 @@ from __future__ import annotations
 import json
 import sys
 
+from dotenv import load_dotenv
+
 from reb_api import DEFAULT_STATBL_ID, RebClient
 
 
 def main(argv: list[str]) -> int:
+    load_dotenv()
     client = RebClient.from_env()
     cmd = argv[1] if len(argv) > 1 else "sample"
 

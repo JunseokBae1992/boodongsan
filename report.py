@@ -15,6 +15,8 @@ from __future__ import annotations
 import argparse
 import sys
 
+from dotenv import load_dotenv
+
 from analysis import compute_all, rows_to_frame
 from reb_api import (
     DEFAULT_DTACYCLE_CD,
@@ -39,6 +41,7 @@ def main(argv: list[str]) -> int:
     p.add_argument("--all-regions", action="store_true", help="서울 자치구 필터 해제")
     p.add_argument("--out", default="", help="CSV 저장 경로")
     args = p.parse_args(argv[1:])
+    load_dotenv()
 
     try:
         client = RebClient.from_env()

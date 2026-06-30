@@ -50,6 +50,28 @@ streamlit run app.py
 python report.py --start 201501 --out seoul.csv
 ```
 
+### 윈도우 (Windows)
+
+순수 Python이라 윈도우에서도 동일하게 동작합니다.
+
+PowerShell:
+```powershell
+pip install -r requirements.txt
+$env:REB_API_KEY = "발급받은키"
+python report.py --start 201501 --out seoul.csv
+streamlit run app.py
+```
+
+cmd:
+```cmd
+set REB_API_KEY=발급받은키
+streamlit run app.py
+```
+
+또는 `.env` 파일에 `REB_API_KEY=발급받은키` 한 줄을 적어두면
+`discover.py`/`report.py`/`app.py` 가 자동으로 읽습니다.
+키를 `.env`에 넣었다면 **`run.bat` 더블클릭**만으로 대시보드가 실행됩니다.
+
 ### Docker (서버 배포)
 
 ```bash

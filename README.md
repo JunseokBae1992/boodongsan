@@ -43,8 +43,23 @@ pip install -r requirements.txt
 # 1) 통계표/지역/항목 코드 확인 (선택)
 python discover.py sample A_2024_00045
 
-# 2) 대시보드 실행
+# 2-a) 웹 대시보드 실행
 streamlit run app.py
+
+# 2-b) 헤드리스 리포트 (서버/cron용, 표 출력 + CSV 저장)
+python report.py --start 201501 --out seoul.csv
+```
+
+### Docker (서버 배포)
+
+```bash
+docker build -t boodongsan .
+
+# 대시보드
+docker run -p 8501:8501 -e REB_API_KEY=발급받은키 boodongsan
+
+# 헤드리스 리포트
+docker run -e REB_API_KEY=발급받은키 boodongsan python report.py --out /tmp/seoul.csv
 ```
 
 대시보드 좌측에서 `STATBL_ID`, 주기(`DTACYCLE_CD`), 기간을 조정할 수 있습니다.
@@ -57,7 +72,9 @@ streamlit run app.py
 | `reb_api.py` | R-ONE OpenAPI 클라이언트 (재시도, JSON 파싱) |
 | `analysis.py` | 고점/저점/현재 및 비율 계산 |
 | `app.py` | Streamlit 대시보드 (표 · 차트 · CSV 내보내기) |
+| `report.py` | 헤드리스 리포트 CLI (서버/cron용, 표 출력 + CSV) |
 | `discover.py` | STATBL_ID / CLS_ID / ITM_ID 탐색 CLI |
+| `Dockerfile` | 컨테이너 배포용 |
 | `test_analysis.py` | 계산 로직 단위 테스트 (API 키 불필요) |
 
 ## 테스트

@@ -53,6 +53,19 @@ def load_rows(statbl_id: str, dtacycle: str, start: str, end: str) -> list[dict]
     )
 
 
+def appeal_label(recovery_pct: float) -> str:
+    """전고점 대비 수준(%)을 매수 관점 라벨로. 높을수록 고가 부담, 낮을수록 저가 메리트."""
+    if recovery_pct >= 105:
+        return "🔴 고가 부담 큼"
+    if recovery_pct >= 100:
+        return "🟠 고가 부담"
+    if recovery_pct >= 95:
+        return "🟡 고점 근접"
+    if recovery_pct >= 85:
+        return "🟢 저가 메리트"
+    return "🔵 저가 메리트 큼"
+
+
 def filter_seoul_gu(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
@@ -128,20 +141,22 @@ with st.expander("🔍 진단 — 원본 데이터/항목 확인"):
     st.dataframe(rd, use_container_width=True, height=250)
 
 stats = compute_all(df)
+stats["appeal"] = stats["recovery_from_peak_pct"].map(appeal_label)
 
 # ── 상단 요약 KPI ─────────────────────────────────────────
 base_month = stats["current_time"].max() if not stats.empty else "-"
 top_rise = stats.iloc[0] if not stats.empty else None
-top_rec = stats.sort_values("recovery_from_peak_pct", ascending=False).iloc[0] if not stats.empty else None
+# 저가 메리트 = 전고점 대비 수준이 가장 낮은(제일 싼) 구
+cheapest = stats.sort_values("recovery_from_peak_pct").iloc[0] if not stats.empty else None
 
 n_breakout = int((stats["status"] == "전고점 돌파").sum()) if not stats.empty else 0
 k1, k2, k3, k4 = st.columns(4)
 k1.metric("기준월", str(base_month))
-k2.metric("전고점 돌파(신고가)", f"{n_breakout} / {len(stats)}개 구")
+k2.metric("전고점 돌파(고가 부담)", f"{n_breakout} / {len(stats)}개 구")
 if top_rise is not None:
-    k3.metric("상승률 1위", top_rise["region"], f"저점대비 +{top_rise['rise_from_trough_pct']:.1f}%")
-if top_rec is not None:
-    k4.metric("회복률 1위", top_rec["region"], f"고점대비 {top_rec['recovery_from_peak_pct']:.1f}%")
+    k3.metric("반등 1위(저점대비)", top_rise["region"], f"+{top_rise['rise_from_trough_pct']:.1f}%")
+if cheapest is not None:
+    k4.metric("저가 메리트 1위", cheapest["region"], f"전고점 대비 {cheapest['recovery_from_peak_pct']:.0f}%")
 
 st.divider()
 
@@ -229,13 +244,14 @@ with tab_buy:
 # ── 순위표 탭 ─────────────────────────────────────────────
 with tab_rank:
     sort_key = st.radio(
-        "정렬 기준", ["저점대비 상승률", "고점대비 회복률", "고점대비 낙폭", "지역명"],
+        "정렬 기준",
+        ["저가 메리트순(전고점 대비 낮은순)", "저점대비 반등", "전고점 대비 수준", "지역명"],
         horizontal=True,
     )
     key_map = {
-        "저점대비 상승률": ("rise_from_trough_pct", False),
-        "고점대비 회복률": ("recovery_from_peak_pct", False),
-        "고점대비 낙폭": ("drawdown_pct", True),
+        "저가 메리트순(전고점 대비 낮은순)": ("recovery_from_peak_pct", True),
+        "저점대비 반등": ("rise_from_trough_pct", False),
+        "전고점 대비 수준": ("recovery_from_peak_pct", False),
         "지역명": ("region", True),
     }
     col, asc = key_map[sort_key]
@@ -247,6 +263,7 @@ with tab_rank:
         use_container_width=True,
         column_config={
             "region": st.column_config.TextColumn("지역"),
+            "appeal": st.column_config.TextColumn("가격 매력도"),
             "status": st.column_config.TextColumn("상태"),
             "current_value": st.column_config.NumberColumn("현재지수", format="%.1f"),
             "current_time": st.column_config.TextColumn("기준월"),
@@ -255,17 +272,17 @@ with tab_rank:
             "trough_value": st.column_config.NumberColumn("저점", format="%.1f"),
             "trough_time": st.column_config.TextColumn("저점시점"),
             "rise_from_trough_pct": st.column_config.ProgressColumn(
-                "저점대비 상승률(%)", format="%.1f%%",
+                "저점대비 반등(%)", format="%.1f%%",
                 min_value=0, max_value=float(max(stats["rise_from_trough_pct"].max(), 1)),
             ),
             "recovery_from_peak_pct": st.column_config.NumberColumn(
-                "전고점대비 회복률(%)", format="%.1f%%",
-                help="100 초과 = 전고점 돌파(신고가)",
+                "전고점 대비 수준(%)", format="%.1f%%",
+                help="100=고점과 동일, 100 초과=고점보다 비쌈(부담), 미만=고점보다 쌈(메리트)",
             ),
             "drawdown_pct": st.column_config.NumberColumn("전고점대비 낙폭(%)", format="%.1f%%"),
         },
         column_order=[
-            "region", "status", "current_value", "current_time",
+            "region", "appeal", "status", "current_value", "current_time",
             "peak_value", "peak_time", "trough_value", "trough_time",
             "rise_from_trough_pct", "recovery_from_peak_pct", "drawdown_pct",
         ],
@@ -280,19 +297,19 @@ with tab_rank:
 with tab_chart:
     c1, c2 = st.columns(2)
     with c1:
-        st.markdown("**저점 대비 상승률**")
+        st.markdown("**저점 대비 반등폭** (바닥에서 얼마나 올랐나)")
         d = stats.sort_values("rise_from_trough_pct")
         fig = px.bar(d, x="rise_from_trough_pct", y="region", orientation="h",
-                     labels={"region": "", "rise_from_trough_pct": "상승률(%)"},
+                     labels={"region": "", "rise_from_trough_pct": "반등(%)"},
                      text="rise_from_trough_pct")
         fig.update_traces(texttemplate="%{text:.1f}", textposition="outside")
         fig.update_layout(height=650, margin=dict(l=10, r=10, t=10, b=10))
         st.plotly_chart(fig, use_container_width=True)
     with c2:
-        st.markdown("**전고점 대비 회복률** (100 = 완전회복, 초과 = 신고가 돌파)")
+        st.markdown("**전고점 대비 수준** (100 미만=고점보다 쌈/메리트, 초과=고점보다 비쌈/부담)")
         d2 = stats.sort_values("recovery_from_peak_pct")
         fig2 = px.bar(d2, x="recovery_from_peak_pct", y="region", orientation="h",
-                      labels={"region": "", "recovery_from_peak_pct": "회복률(%)"},
+                      labels={"region": "", "recovery_from_peak_pct": "전고점 대비 수준(%)"},
                       text="recovery_from_peak_pct")
         fig2.update_traces(texttemplate="%{text:.1f}", textposition="outside")
         fig2.add_vline(x=100, line_dash="dash", line_color="red")
@@ -314,11 +331,11 @@ with tab_trend:
         for region in picked:
             s = compute_stats(df[df["region"] == region])
             if s:
-                st.markdown(f"**{region}** · {s.status}")
+                st.markdown(f"**{region}** · {s.status} · {appeal_label(s.recovery_from_peak_pct)}")
                 c1, c2, c3, c4 = st.columns(4)
                 c1.metric("현재지수", f"{s.current_value:.1f}", f"{s.current_time}")
                 c2.metric("전고점", f"{s.peak_value:.1f}", f"{s.peak_time}")
-                c3.metric("저점대비 상승률", f"{s.rise_from_trough_pct:.1f}%")
-                c4.metric("전고점대비 회복률", f"{s.recovery_from_peak_pct:.1f}%")
+                c3.metric("저점대비 반등", f"{s.rise_from_trough_pct:.1f}%")
+                c4.metric("전고점 대비 수준", f"{s.recovery_from_peak_pct:.1f}%")
     else:
         st.info("비교할 지역을 하나 이상 선택하세요.")

@@ -87,22 +87,44 @@ class RebClient:
         end_wrttime: str | None = None,
         cls_id: str | None = None,
         itm_id: str | None = None,
+        page_size: int = 1000,
+        max_pages: int = 200,
     ) -> list[dict]:
-        """통계 데이터(시계열) 조회. 결과는 row dict 리스트."""
-        params: dict[str, Any] = {
+        """통계 데이터(시계열) 조회. 모든 페이지를 순회해 전체 row를 반환.
+
+        R-ONE OpenAPI는 pIndex/pSize 로 페이지네이션되므로, 한 번만
+        호출하면 앞쪽 일부 지역만 나온다. list_total_count 에 도달하거나
+        빈 페이지가 나올 때까지 페이지를 넘겨 전부 수집한다.
+        """
+        base: dict[str, Any] = {
             "STATBL_ID": statbl_id,
             "DTACYCLE_CD": dtacycle_cd,
         }
         if start_wrttime:
-            params["START_WRTTIME"] = start_wrttime
+            base["START_WRTTIME"] = start_wrttime
         if end_wrttime:
-            params["END_WRTTIME"] = end_wrttime
+            base["END_WRTTIME"] = end_wrttime
         if cls_id:
-            params["CLS_ID"] = cls_id
+            base["CLS_ID"] = cls_id
         if itm_id:
-            params["ITM_ID"] = itm_id
-        data = self._get("SttsApiTblData.do", params)
-        return _extract_rows(data)
+            base["ITM_ID"] = itm_id
+
+        all_rows: list[dict] = []
+        total: int | None = None
+        for pindex in range(1, max_pages + 1):
+            params = {**base, "pIndex": pindex, "pSize": page_size}
+            data = self._get("SttsApiTblData.do", params)
+            rows = _extract_rows(data)
+            if not rows:
+                break
+            all_rows.extend(rows)
+            if total is None:
+                total = _total_count(data)
+            if total is not None and len(all_rows) >= total:
+                break
+            if len(rows) < page_size:
+                break
+        return all_rows
 
 
 def _iter_blocks(payload: Any) -> Iterable[dict]:
@@ -126,6 +148,17 @@ def _raise_on_api_error(payload: Any) -> None:
             # INFO-000 = 정상
             if code and not code.startswith("INFO-00"):
                 raise RebApiError(f"API 오류 [{code}] {msg}")
+
+
+def _total_count(payload: Any) -> int | None:
+    """응답 head 의 list_total_count(전체 행 수)를 찾는다."""
+    for block in _iter_blocks(payload):
+        if "list_total_count" in block:
+            try:
+                return int(block["list_total_count"])
+            except (TypeError, ValueError):
+                return None
+    return None
 
 
 def _extract_rows(payload: Any) -> list[dict]:

@@ -96,51 +96,112 @@ if only_gu:
 
 stats = compute_all(df)
 
-st.subheader("📊 구별 지표 요약")
-nice = stats.rename(columns={
-    "region": "지역",
-    "peak_value": "고점",
-    "peak_time": "고점시점",
-    "trough_value": "저점",
-    "trough_time": "저점시점",
-    "current_value": "현재",
-    "current_time": "기준월",
-    "rise_from_trough_pct": "저점대비 상승률(%)",
-    "recovery_from_peak_pct": "고점대비 회복률(%)",
-    "drawdown_pct": "고점대비 낙폭(%)",
-})
-st.dataframe(nice, use_container_width=True, hide_index=True)
-st.download_button("CSV 내려받기", nice.to_csv(index=False).encode("utf-8-sig"),
-                   "seoul_index_stats.csv", "text/csv")
+# ── 상단 요약 KPI ─────────────────────────────────────────
+base_month = stats["current_time"].max() if not stats.empty else "-"
+top_rise = stats.iloc[0] if not stats.empty else None
+top_rec = stats.sort_values("recovery_from_peak_pct", ascending=False).iloc[0] if not stats.empty else None
 
-col1, col2 = st.columns(2)
-with col1:
-    st.markdown("**저점 대비 상승률 TOP**")
-    fig = px.bar(stats.head(15), x="region", y="rise_from_trough_pct",
-                 labels={"region": "지역", "rise_from_trough_pct": "상승률(%)"})
-    st.plotly_chart(fig, use_container_width=True)
-with col2:
-    st.markdown("**고점 대비 회복률**")
-    rec = stats.sort_values("recovery_from_peak_pct", ascending=False)
-    fig2 = px.bar(rec.head(15), x="region", y="recovery_from_peak_pct",
-                  labels={"region": "지역", "recovery_from_peak_pct": "회복률(%)"})
-    fig2.add_hline(y=100, line_dash="dash", line_color="red")
-    st.plotly_chart(fig2, use_container_width=True)
+k1, k2, k3, k4 = st.columns(4)
+k1.metric("기준월", str(base_month))
+k2.metric("분석 지역 수", f"{len(stats)}개 구")
+if top_rise is not None:
+    k3.metric("상승률 1위", top_rise["region"], f"저점대비 +{top_rise['rise_from_trough_pct']:.1f}%")
+if top_rec is not None:
+    k4.metric("회복률 1위", top_rec["region"], f"고점대비 {top_rec['recovery_from_peak_pct']:.1f}%")
 
-st.subheader("📈 지역별 지수 추이")
-regions = sorted(df["region"].unique())
-picked = st.multiselect("지역 선택", regions, default=regions[:3])
-if picked:
-    sub = df[df["region"].isin(picked)]
-    line = px.line(sub, x="time", y="value", color="region",
-                   labels={"time": "기간", "value": "지수", "region": "지역"})
-    st.plotly_chart(line, use_container_width=True)
+st.divider()
 
-    for region in picked:
-        s = compute_stats(df[df["region"] == region])
-        if s:
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric(f"{region} 현재", f"{s.current_value:.1f}", f"{s.current_time}")
-            c2.metric("고점", f"{s.peak_value:.1f}", f"{s.peak_time}")
-            c3.metric("저점 대비 상승률", f"{s.rise_from_trough_pct:.2f}%")
-            c4.metric("고점 대비 회복률", f"{s.recovery_from_peak_pct:.2f}%")
+tab_rank, tab_chart, tab_trend = st.tabs(["📋 구별 순위표", "📊 상승률·회복률", "📈 지수 추이"])
+
+# ── 순위표 탭 ─────────────────────────────────────────────
+with tab_rank:
+    sort_key = st.radio(
+        "정렬 기준", ["저점대비 상승률", "고점대비 회복률", "고점대비 낙폭", "지역명"],
+        horizontal=True,
+    )
+    key_map = {
+        "저점대비 상승률": ("rise_from_trough_pct", False),
+        "고점대비 회복률": ("recovery_from_peak_pct", False),
+        "고점대비 낙폭": ("drawdown_pct", True),
+        "지역명": ("region", True),
+    }
+    col, asc = key_map[sort_key]
+    view = stats.sort_values(col, ascending=asc).reset_index(drop=True)
+    view.index = view.index + 1  # 순위 1부터
+
+    st.dataframe(
+        view,
+        use_container_width=True,
+        column_config={
+            "region": st.column_config.TextColumn("지역"),
+            "current_value": st.column_config.NumberColumn("현재지수", format="%.1f"),
+            "current_time": st.column_config.TextColumn("기준월"),
+            "peak_value": st.column_config.NumberColumn("고점", format="%.1f"),
+            "peak_time": st.column_config.TextColumn("고점시점"),
+            "trough_value": st.column_config.NumberColumn("저점", format="%.1f"),
+            "trough_time": st.column_config.TextColumn("저점시점"),
+            "rise_from_trough_pct": st.column_config.ProgressColumn(
+                "저점대비 상승률(%)", format="%.1f%%",
+                min_value=0, max_value=float(max(stats["rise_from_trough_pct"].max(), 1)),
+            ),
+            "recovery_from_peak_pct": st.column_config.NumberColumn("고점대비 회복률(%)", format="%.1f%%"),
+            "drawdown_pct": st.column_config.NumberColumn("고점대비 낙폭(%)", format="%.1f%%"),
+        },
+        column_order=[
+            "region", "current_value", "current_time",
+            "peak_value", "peak_time", "trough_value", "trough_time",
+            "rise_from_trough_pct", "recovery_from_peak_pct", "drawdown_pct",
+        ],
+    )
+    st.download_button(
+        "⬇️ CSV 내려받기",
+        view.to_csv(index=False).encode("utf-8-sig"),
+        "seoul_index_stats.csv", "text/csv",
+    )
+
+# ── 차트 탭 (가로 막대: 25개 구도 읽기 편함) ────────────────
+with tab_chart:
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**저점 대비 상승률**")
+        d = stats.sort_values("rise_from_trough_pct")
+        fig = px.bar(d, x="rise_from_trough_pct", y="region", orientation="h",
+                     labels={"region": "", "rise_from_trough_pct": "상승률(%)"},
+                     text="rise_from_trough_pct")
+        fig.update_traces(texttemplate="%{text:.1f}", textposition="outside")
+        fig.update_layout(height=650, margin=dict(l=10, r=10, t=10, b=10))
+        st.plotly_chart(fig, use_container_width=True)
+    with c2:
+        st.markdown("**고점 대비 회복률** (100 = 고점 완전 회복)")
+        d2 = stats.sort_values("recovery_from_peak_pct")
+        fig2 = px.bar(d2, x="recovery_from_peak_pct", y="region", orientation="h",
+                      labels={"region": "", "recovery_from_peak_pct": "회복률(%)"},
+                      text="recovery_from_peak_pct")
+        fig2.update_traces(texttemplate="%{text:.1f}", textposition="outside")
+        fig2.add_vline(x=100, line_dash="dash", line_color="red")
+        fig2.update_layout(height=650, margin=dict(l=10, r=10, t=10, b=10))
+        st.plotly_chart(fig2, use_container_width=True)
+
+# ── 추이 탭 ───────────────────────────────────────────────
+with tab_trend:
+    regions = sorted(df["region"].unique())
+    default = list(stats.head(5)["region"]) if not stats.empty else regions[:5]
+    picked = st.multiselect("지역 선택 (여러 개 비교 가능)", regions, default=default)
+    if picked:
+        sub = df[df["region"].isin(picked)]
+        line = px.line(sub, x="time", y="value", color="region",
+                       labels={"time": "기간", "value": "지수", "region": "지역"})
+        line.update_layout(height=450, legend_title_text="지역")
+        st.plotly_chart(line, use_container_width=True)
+
+        for region in picked:
+            s = compute_stats(df[df["region"] == region])
+            if s:
+                st.markdown(f"**{region}**")
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("현재지수", f"{s.current_value:.1f}", f"{s.current_time}")
+                c2.metric("고점", f"{s.peak_value:.1f}", f"{s.peak_time}")
+                c3.metric("저점대비 상승률", f"{s.rise_from_trough_pct:.1f}%")
+                c4.metric("고점대비 회복률", f"{s.recovery_from_peak_pct:.1f}%")
+    else:
+        st.info("비교할 지역을 하나 이상 선택하세요.")

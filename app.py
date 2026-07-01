@@ -134,9 +134,10 @@ base_month = stats["current_time"].max() if not stats.empty else "-"
 top_rise = stats.iloc[0] if not stats.empty else None
 top_rec = stats.sort_values("recovery_from_peak_pct", ascending=False).iloc[0] if not stats.empty else None
 
+n_breakout = int((stats["status"] == "전고점 돌파").sum()) if not stats.empty else 0
 k1, k2, k3, k4 = st.columns(4)
 k1.metric("기준월", str(base_month))
-k2.metric("분석 지역 수", f"{len(stats)}개 구")
+k2.metric("전고점 돌파(신고가)", f"{n_breakout} / {len(stats)}개 구")
 if top_rise is not None:
     k3.metric("상승률 1위", top_rise["region"], f"저점대비 +{top_rise['rise_from_trough_pct']:.1f}%")
 if top_rec is not None:
@@ -167,21 +168,25 @@ with tab_rank:
         use_container_width=True,
         column_config={
             "region": st.column_config.TextColumn("지역"),
+            "status": st.column_config.TextColumn("상태"),
             "current_value": st.column_config.NumberColumn("현재지수", format="%.1f"),
             "current_time": st.column_config.TextColumn("기준월"),
-            "peak_value": st.column_config.NumberColumn("고점", format="%.1f"),
-            "peak_time": st.column_config.TextColumn("고점시점"),
+            "peak_value": st.column_config.NumberColumn("전고점", format="%.1f"),
+            "peak_time": st.column_config.TextColumn("전고점시점"),
             "trough_value": st.column_config.NumberColumn("저점", format="%.1f"),
             "trough_time": st.column_config.TextColumn("저점시점"),
             "rise_from_trough_pct": st.column_config.ProgressColumn(
                 "저점대비 상승률(%)", format="%.1f%%",
                 min_value=0, max_value=float(max(stats["rise_from_trough_pct"].max(), 1)),
             ),
-            "recovery_from_peak_pct": st.column_config.NumberColumn("고점대비 회복률(%)", format="%.1f%%"),
-            "drawdown_pct": st.column_config.NumberColumn("고점대비 낙폭(%)", format="%.1f%%"),
+            "recovery_from_peak_pct": st.column_config.NumberColumn(
+                "전고점대비 회복률(%)", format="%.1f%%",
+                help="100 초과 = 전고점 돌파(신고가)",
+            ),
+            "drawdown_pct": st.column_config.NumberColumn("전고점대비 낙폭(%)", format="%.1f%%"),
         },
         column_order=[
-            "region", "current_value", "current_time",
+            "region", "status", "current_value", "current_time",
             "peak_value", "peak_time", "trough_value", "trough_time",
             "rise_from_trough_pct", "recovery_from_peak_pct", "drawdown_pct",
         ],
@@ -205,7 +210,7 @@ with tab_chart:
         fig.update_layout(height=650, margin=dict(l=10, r=10, t=10, b=10))
         st.plotly_chart(fig, use_container_width=True)
     with c2:
-        st.markdown("**고점 대비 회복률** (100 = 고점 완전 회복)")
+        st.markdown("**전고점 대비 회복률** (100 = 완전회복, 초과 = 신고가 돌파)")
         d2 = stats.sort_values("recovery_from_peak_pct")
         fig2 = px.bar(d2, x="recovery_from_peak_pct", y="region", orientation="h",
                       labels={"region": "", "recovery_from_peak_pct": "회복률(%)"},
@@ -230,11 +235,11 @@ with tab_trend:
         for region in picked:
             s = compute_stats(df[df["region"] == region])
             if s:
-                st.markdown(f"**{region}**")
+                st.markdown(f"**{region}** · {s.status}")
                 c1, c2, c3, c4 = st.columns(4)
                 c1.metric("현재지수", f"{s.current_value:.1f}", f"{s.current_time}")
-                c2.metric("고점", f"{s.peak_value:.1f}", f"{s.peak_time}")
+                c2.metric("전고점", f"{s.peak_value:.1f}", f"{s.peak_time}")
                 c3.metric("저점대비 상승률", f"{s.rise_from_trough_pct:.1f}%")
-                c4.metric("고점대비 회복률", f"{s.recovery_from_peak_pct:.1f}%")
+                c4.metric("전고점대비 회복률", f"{s.recovery_from_peak_pct:.1f}%")
     else:
         st.info("비교할 지역을 하나 이상 선택하세요.")

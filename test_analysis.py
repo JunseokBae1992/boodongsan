@@ -35,28 +35,50 @@ def test_basic_cycle():
 
 
 def test_trough_is_after_peak_only():
-    # 초반에 더 낮은 값(80)이 있어도, 저점은 '고점 이후' 구간에서만 찾는다.
+    # 초반 저점(80)은 running-max 대비 낙폭 0이라 저점 아님.
+    # 저점은 '가장 깊은 조정' 지점(고점 120 이후 95).
     df = _frame("송파구", [
-        ("201901", 80.0),   # 전체 최저지만 고점 이전 -> 저점 아님
-        ("202006", 120.0),  # 고점
-        ("202012", 95.0),   # 고점 이후 저점
+        ("201901", 80.0),   # 시작점, 낙폭 0 -> 저점 아님
+        ("202006", 120.0),  # 전고점
+        ("202012", 95.0),   # 조정 저점
         ("202106", 110.0),
     ])
     s = compute_stats(df)
+    assert s.peak_value == 120.0 and s.peak_time == "202006"
     assert s.trough_value == 95.0
     assert s.rise_from_trough_pct == round((110 - 95) / 95 * 100, 2)
 
 
-def test_still_rising_recovery_100():
-    # 최신이 곧 고점(하락 없음) -> 저점=현재, 상승률 0, 회복률 100
-    df = _frame("마포구", [
-        ("202001", 100.0),
-        ("202106", 130.0),  # 고점=현재
+def test_breakout_new_high():
+    # 조정 후 전고점을 넘어 신고가: 전고점/저점이 잡히고 '돌파'로 표시.
+    df = _frame("양천구", [
+        ("201501", 80.0),
+        ("202106", 100.0),  # 전고점
+        ("202401", 85.0),   # 조정 저점
+        ("202605", 105.0),  # 현재 = 신고가(전고점 초과)
     ])
     s = compute_stats(df)
-    assert s.trough_value == 130.0
-    assert s.rise_from_trough_pct == 0.0
-    assert s.recovery_from_peak_pct == 100.0
+    assert s.peak_value == 100.0 and s.peak_time == "202106"
+    assert s.trough_value == 85.0 and s.trough_time == "202401"
+    assert s.recovery_from_peak_pct == 105.0     # 100 초과 = 돌파
+    assert s.rise_from_trough_pct == round((105 - 85) / 85 * 100, 2)
+    assert s.status == "전고점 돌파"
+
+
+def test_recovering_below_peak():
+    # 아직 전고점 미달 -> 회복 진행중, 회복률 100 미만
+    df = _frame("노원구", [
+        ("201501", 70.0),
+        ("202110", 110.0),  # 전고점
+        ("202312", 88.0),   # 저점
+        ("202605", 99.0),   # 현재 (전고점 미달)
+    ])
+    s = compute_stats(df)
+    assert s.peak_value == 110.0
+    assert s.trough_value == 88.0
+    assert s.recovery_from_peak_pct == round(99 / 110 * 100, 2)
+    assert s.recovery_from_peak_pct < 100
+    assert s.status == "회복 진행중"
 
 
 def test_rows_to_frame_and_compute_all():
@@ -71,12 +93,13 @@ def test_rows_to_frame_and_compute_all():
     assert set(df["region"]) == {"강남구", "송파구"}
     result = compute_all(df)
     assert len(result) == 2
-    assert {"rise_from_trough_pct", "recovery_from_peak_pct"} <= set(result.columns)
+    assert {"rise_from_trough_pct", "recovery_from_peak_pct", "status"} <= set(result.columns)
 
 
 if __name__ == "__main__":
     test_basic_cycle()
     test_trough_is_after_peak_only()
-    test_still_rising_recovery_100()
+    test_breakout_new_high()
+    test_recovering_below_peak()
     test_rows_to_frame_and_compute_all()
     print("모든 테스트 통과 ✅")

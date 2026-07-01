@@ -27,6 +27,18 @@ CLS_NAME_KEYS = ["CLS_NM", "CLS_FULLNM", "GRP_NM"]
 STATUS_BREAKOUT = "전고점 돌파"
 STATUS_RECOVERING = "회복 진행중"
 
+# 사이클 국면
+PHASE_PEAK = "고점권"      # 역대 최고가 근처 (비쌈)
+PHASE_FALLING = "하락 중"  # 최근 모멘텀 마이너스
+PHASE_BOTTOM = "바닥권"    # 많이 빠지고 하락 멈춤 (매수 관심)
+PHASE_RISING = "상승 중"   # 저점에서 반등 상승
+PHASE_FLAT = "보합"        # 뚜렷한 방향 없음
+
+# 국면 판정 임계값 (월간 지수 기준, %)
+_MOM_FLAT = 0.3            # ±0.3% 이내면 보합/횡보로 간주
+_NEAR_PEAK = -2.0         # 역대최고 대비 -2% 이내면 고점권
+_MEANINGFUL_DIP = -3.0    # 역대최고 대비 -3% 이상 빠져야 바닥권 후보
+
 
 @dataclass
 class IndexStats:
@@ -41,9 +53,37 @@ class IndexStats:
     recovery_from_peak_pct: float  # 고점 대비 회복률 (%), 100 초과 = 돌파
     drawdown_pct: float          # 조정 낙폭 (%) = trough/peak - 1
     status: str                  # '전고점 돌파' 또는 '회복 진행중'
+    ath_value: float             # 역대 최고 지수
+    cur_drawdown_pct: float      # 현재 역대최고 대비 낙폭 (%), 0이면 신고가
+    mom_3m_pct: float            # 최근 3개월 변동률 (%)
+    mom_6m_pct: float            # 최근 6개월 변동률 (%)
+    mom_12m_pct: float           # 최근 12개월 변동률 (%)
+    phase: str                   # 사이클 국면
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+def _pct_change(values, months: int) -> float:
+    """최근 months개월 변동률(%). 데이터가 부족하면 가용 범위로."""
+    if len(values) <= 1:
+        return 0.0
+    n = min(months, len(values) - 1)
+    past = float(values[-1 - n])
+    return (float(values[-1]) / past - 1) * 100 if past else 0.0
+
+
+def _classify_phase(cur_drawdown_pct: float, mom_3m_pct: float) -> str:
+    """현재 낙폭 + 3개월 모멘텀으로 사이클 국면 판정."""
+    if cur_drawdown_pct > _NEAR_PEAK:          # 역대최고 -2% 이내
+        return PHASE_PEAK
+    if mom_3m_pct <= -_MOM_FLAT:               # 하락 모멘텀
+        return PHASE_FALLING
+    if cur_drawdown_pct <= _MEANINGFUL_DIP and mom_3m_pct < _MOM_FLAT:
+        return PHASE_BOTTOM                     # 많이 빠졌고 하락 멈춤
+    if mom_3m_pct >= _MOM_FLAT:
+        return PHASE_RISING
+    return PHASE_FLAT
 
 
 def _first_key(row: dict, keys: list[str]) -> str | None:
@@ -118,6 +158,14 @@ def compute_stats(series: pd.DataFrame) -> IndexStats | None:
     drawdown = (trough_value / peak_value - 1) * 100 if peak_value else 0.0
     status = STATUS_BREAKOUT if current_value >= peak_value else STATUS_RECOVERING
 
+    # 매수 타이밍용: 현재 낙폭 + 모멘텀 + 국면
+    ath_value = float(running_max[-1])          # 역대 최고 지수
+    cur_drawdown = (current_value / ath_value - 1) * 100 if ath_value else 0.0
+    mom_3 = _pct_change(values, 3)
+    mom_6 = _pct_change(values, 6)
+    mom_12 = _pct_change(values, 12)
+    phase = _classify_phase(cur_drawdown, mom_3)
+
     return IndexStats(
         region=region,
         peak_value=peak_value,
@@ -130,6 +178,12 @@ def compute_stats(series: pd.DataFrame) -> IndexStats | None:
         recovery_from_peak_pct=round(recovery, 2),
         drawdown_pct=round(drawdown, 2),
         status=status,
+        ath_value=round(ath_value, 2),
+        cur_drawdown_pct=round(cur_drawdown, 2),
+        mom_3m_pct=round(mom_3, 2),
+        mom_6m_pct=round(mom_6, 2),
+        mom_12m_pct=round(mom_12, 2),
+        phase=phase,
     )
 
 

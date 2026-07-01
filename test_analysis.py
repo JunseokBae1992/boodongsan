@@ -81,6 +81,39 @@ def test_recovering_below_peak():
     assert s.status == "회복 진행중"
 
 
+def test_momentum_and_phase_falling():
+    # 최근 계속 하락 -> 3개월 변동률 음수, 국면 '하락 중'
+    df = _frame("강동구", [
+        ("202401", 100.0),
+        ("202502", 110.0),  # 전고점(역대최고)
+        ("202503", 108.0),
+        ("202504", 105.0),
+        ("202505", 102.0),  # 현재 (3개월 전 110 대비 하락)
+    ])
+    s = compute_stats(df)
+    assert s.ath_value == 110.0
+    assert s.cur_drawdown_pct == round((102 / 110 - 1) * 100, 2)  # 음수
+    assert s.mom_3m_pct == round((102 / 110 - 1) * 100, 2)         # 3개월 전=110
+    assert s.mom_3m_pct < 0
+    assert s.phase == "하락 중"
+
+
+def test_phase_bottom():
+    # 크게 빠진 뒤 최근 3개월 횡보 -> '바닥권'
+    df = _frame("도봉구", [
+        ("202301", 120.0),  # 역대최고
+        ("202403", 96.0),
+        ("202406", 95.6),   # 3개월 전
+        ("202407", 95.65),
+        ("202408", 95.68),
+        ("202409", 95.7),   # 현재: 최고 대비 -20%대, 3개월 변동 미미
+    ])
+    s = compute_stats(df)
+    assert s.cur_drawdown_pct <= -3
+    assert -0.3 < s.mom_3m_pct < 0.3
+    assert s.phase == "바닥권"
+
+
 def test_rows_to_frame_and_compute_all():
     rows = [
         {"CLS_NM": "강남구", "WRTTIME_IDTFR_ID": "202001", "DTA_VAL": "100"},
@@ -93,7 +126,8 @@ def test_rows_to_frame_and_compute_all():
     assert set(df["region"]) == {"강남구", "송파구"}
     result = compute_all(df)
     assert len(result) == 2
-    assert {"rise_from_trough_pct", "recovery_from_peak_pct", "status"} <= set(result.columns)
+    assert {"rise_from_trough_pct", "recovery_from_peak_pct", "status",
+            "cur_drawdown_pct", "mom_3m_pct", "phase"} <= set(result.columns)
 
 
 if __name__ == "__main__":
@@ -101,5 +135,7 @@ if __name__ == "__main__":
     test_trough_is_after_peak_only()
     test_breakout_new_high()
     test_recovering_below_peak()
+    test_momentum_and_phase_falling()
+    test_phase_bottom()
     test_rows_to_frame_and_compute_all()
     print("모든 테스트 통과 ✅")

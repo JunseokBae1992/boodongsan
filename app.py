@@ -145,7 +145,86 @@ if top_rec is not None:
 
 st.divider()
 
-tab_rank, tab_chart, tab_trend = st.tabs(["📋 구별 순위표", "📊 상승률·회복률", "📈 지수 추이"])
+tab_buy, tab_rank, tab_chart, tab_trend = st.tabs(
+    ["🏠 매수 타이밍", "📋 구별 순위표", "📊 상승률·회복률", "📈 지수 추이"]
+)
+
+# ── 매수 타이밍 탭 ────────────────────────────────────────
+PHASE_EMOJI = {
+    "고점권": "🔴 고점권", "하락 중": "📉 하락 중", "바닥권": "🟢 바닥권",
+    "상승 중": "📈 상승 중", "보합": "⏸ 보합",
+}
+with tab_buy:
+    st.markdown("#### 다음 하락장 매수 판단")
+    st.caption(
+        "**국면**: 🔴고점권(비쌈) → 📉하락 중 → 🟢바닥권(하락 멈춤, 매수관심) → 📈상승 중. "
+        "**현재낙폭**: 지금 역대최고 대비 얼마나 싸졌나. "
+        "**역대최대낙폭**: 과거 하락장 최대 낙폭(=더 빠질 여지 가늠). "
+        "**3/6/12개월**: 최근 모멘텀(마이너스=하락, 0 근처=바닥 신호)."
+    )
+
+    # 국면 분포 요약
+    phase_counts = stats["phase"].value_counts()
+    pc = st.columns(5)
+    for i, ph in enumerate(["고점권", "하락 중", "바닥권", "상승 중", "보합"]):
+        pc[i].metric(PHASE_EMOJI[ph], f"{int(phase_counts.get(ph, 0))}개 구")
+
+    st.divider()
+
+    # 매수 후보 조건 설정
+    st.markdown("**매수 후보 조건**")
+    cc1, cc2 = st.columns(2)
+    target_dd = cc1.slider("전고점 대비 최소 하락폭 (%)", 0, 40, 15,
+                           help="이만큼 이상 싸진 구만 후보로. 예) 15 = 전고점 대비 -15% 이상 하락")
+    require_stall = cc2.checkbox("하락이 멈춘 구만 (3개월 변동률 ≥ -0.3%)", value=True,
+                                 help="계속 떨어지는 중이면 '떨어지는 칼날'. 하락이 멈춘 구만 보려면 체크")
+
+    cand = stats.copy()
+    cand = cand[cand["cur_drawdown_pct"] <= -target_dd]
+    if require_stall:
+        cand = cand[cand["mom_3m_pct"] >= -0.3]
+    cand = cand.sort_values("cur_drawdown_pct")  # 많이 빠진 순
+
+    if cand.empty:
+        st.info("조건을 만족하는 구가 없습니다. 하락폭 기준을 낮추거나, 다음 하락장이 오면 후보가 나타납니다. "
+                "(현재 서울 대부분이 고점권/회복 국면일 수 있어요.)")
+    else:
+        st.success(f"매수 후보 {len(cand)}개 구 (많이 빠진 순)")
+        st.dataframe(
+            cand, use_container_width=True, hide_index=True,
+            column_config={
+                "region": st.column_config.TextColumn("지역"),
+                "phase": st.column_config.TextColumn("국면"),
+                "current_value": st.column_config.NumberColumn("현재지수", format="%.1f"),
+                "cur_drawdown_pct": st.column_config.NumberColumn("현재낙폭(%)", format="%.1f%%"),
+                "drawdown_pct": st.column_config.NumberColumn("역대최대낙폭(%)", format="%.1f%%"),
+                "mom_3m_pct": st.column_config.NumberColumn("3개월(%)", format="%.1f%%"),
+                "mom_6m_pct": st.column_config.NumberColumn("6개월(%)", format="%.1f%%"),
+                "mom_12m_pct": st.column_config.NumberColumn("12개월(%)", format="%.1f%%"),
+            },
+            column_order=["region", "phase", "current_value", "cur_drawdown_pct",
+                          "drawdown_pct", "mom_3m_pct", "mom_6m_pct", "mom_12m_pct"],
+        )
+
+    st.divider()
+    st.markdown("**전체 구 국면·모멘텀** (현재낙폭 큰 순)")
+    allv = stats.sort_values("cur_drawdown_pct")
+    st.dataframe(
+        allv, use_container_width=True, hide_index=True,
+        column_config={
+            "region": st.column_config.TextColumn("지역"),
+            "phase": st.column_config.TextColumn("국면"),
+            "current_value": st.column_config.NumberColumn("현재지수", format="%.1f"),
+            "cur_drawdown_pct": st.column_config.NumberColumn("현재낙폭(%)", format="%.1f%%"),
+            "drawdown_pct": st.column_config.NumberColumn("역대최대낙폭(%)", format="%.1f%%"),
+            "mom_3m_pct": st.column_config.NumberColumn("3개월(%)", format="%.1f%%"),
+            "mom_6m_pct": st.column_config.NumberColumn("6개월(%)", format="%.1f%%"),
+            "mom_12m_pct": st.column_config.NumberColumn("12개월(%)", format="%.1f%%"),
+        },
+        column_order=["region", "phase", "current_value", "cur_drawdown_pct",
+                      "drawdown_pct", "mom_3m_pct", "mom_6m_pct", "mom_12m_pct"],
+    )
+    st.caption("⚠️ 지수는 시장 참고용입니다. 실제 매수는 개별 단지 시세·금리·정책·본인 상황을 함께 보세요.")
 
 # ── 순위표 탭 ─────────────────────────────────────────────
 with tab_rank:

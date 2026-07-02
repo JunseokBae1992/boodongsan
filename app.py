@@ -209,9 +209,9 @@ with st.sidebar:
         start = st.text_input("시작 기간 (YYYYMM)", "201501")
         end = st.text_input("종료 기간 (YYYYMM)", "")
         vol_statbl = st.text_input(
-            "거래량 STATBL_ID (선택)", "",
-            help="서울 아파트 매매 거래량 통계표 코드를 넣으면 시황 배너에 거래량이 함께 표시됩니다. "
-                 "코드는 로컬에서 `python discover.py tables` 로 확인하세요. 비우면 미사용.")
+            "거래량 STATBL_ID", "A_2024_00554",
+            help="기본값 A_2024_00554 = (월) 행정구역별 아파트매매거래현황. "
+                 "비우면 거래량 미표시.")
 
 # 페이지를 열면 자동으로 불러온다 (버튼 불필요). 결과는 6시간 캐시.
 try:
@@ -252,6 +252,12 @@ if vol_statbl.strip():
     try:
         vrows = load_rows(vol_statbl.strip(), dtacycle, start, end)
         if vrows:
+            # 항목(건수/면적 등)이 섞이면 단위 혼합을 막기 위해 하나만 선택
+            vitems = sorted({str(r.get("ITM_NM", "")) for r in vrows if r.get("ITM_NM")})
+            if len(vitems) > 1:
+                pref = next((n for n in vitems if any(k in n for k in ["호", "건", "거래"])),
+                            vitems[0])
+                vrows = [r for r in vrows if str(r.get("ITM_NM", "")) == pref]
             vvals, vtimes, _ = _seoul_series(rows_to_frame(vrows))
             vol_series = (list(map(float, vvals)), [str(t) for t in vtimes])
     except RebApiError:

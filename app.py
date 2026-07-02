@@ -90,42 +90,59 @@ def seoul_market(df: pd.DataFrame) -> dict:
                 vals=list(map(float, vals)), times=[str(t) for t in times])
 
 
-def _sparkline(times, vals, color, months=60):
-    """배너용 미니 추세선(축·범례 없이 선만)."""
-    t = pd.to_datetime(pd.Series(times), format="%Y%m", errors="coerce")
-    s = pd.DataFrame({"t": t, "v": vals}).dropna().tail(months)
-    fig = px.line(s, x="t", y="v")
-    fig.update_traces(line_color=color, line_width=2.5,
-                      hovertemplate="%{x|%Y-%m}: %{y:.1f}<extra></extra>")
-    fig.update_layout(height=90, margin=dict(l=0, r=0, t=4, b=0),
-                      xaxis=dict(visible=False), yaxis=dict(visible=False),
-                      showlegend=False, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
-    return fig
+def _svg_sparkline(vals, color, months=36, w=200, h=46, pad=5) -> str:
+    """배너 안에 넣을 가벼운 SVG 미니 추세선(면적 채움 + 끝점)."""
+    v = [float(x) for x in vals if x == x][-months:]
+    if len(v) < 2:
+        return ""
+    lo, hi = min(v), max(v)
+    rng = (hi - lo) or 1.0
+    n = len(v)
+    pts = []
+    for i, x in enumerate(v):
+        px = pad + i * (w - 2 * pad) / (n - 1)
+        py = pad + (h - 2 * pad) * (1 - (x - lo) / rng)
+        pts.append((px, py))
+    line = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
+    fill = f"{pad},{h - pad} " + line + f" {w - pad},{h - pad}"
+    lx, ly = pts[-1]
+    return (
+        f'<svg width="{w}" height="{h}" viewBox="0 0 {w} {h}" preserveAspectRatio="none" '
+        f'style="vertical-align:middle">'
+        f'<polygon points="{fill}" fill="{color}" fill-opacity="0.13"/>'
+        f'<polyline points="{line}" fill="none" stroke="{color}" stroke-width="2" '
+        f'stroke-linejoin="round" stroke-linecap="round"/>'
+        f'<circle cx="{lx:.1f}" cy="{ly:.1f}" r="3" fill="{color}"/></svg>'
+    )
 
 
 def render_market_banner(slot, df: pd.DataFrame, vol_series=None) -> None:
     m = seoul_market(df)
     vol_txt = ""
     if vol_series is not None:
-        vvals, vtimes = vol_series
+        vvals, _vtimes = vol_series
         if len(vvals) > 1:
             vmom3 = _pct(vvals, 3)
             arrow = "▲증가" if vmom3 > 3 else ("▼감소" if vmom3 < -3 else "─보합")
             vol_txt = f"&nbsp;·&nbsp;거래량 3개월 {vmom3:+.0f}% ({arrow})"
+    spark = _svg_sparkline(m["vals"], m["fg"])
     with slot:
         st.markdown(
-            f"""<div style="background:{m['bg']};border-radius:12px;padding:16px 20px;margin:4px 0 2px 0;">
-<span style="font-size:1.7rem;font-weight:800;color:{m['fg']}">{m['emoji']} 서울 부동산 <u>{m['status']}</u></span>
-<span style="float:right;font-size:1.05rem;color:{m['fg']};line-height:2.4rem">
-매매지수 <b>{m['cur']:.1f}</b>&nbsp;·&nbsp;전월 {m['mom1']:+.2f}%&nbsp;·&nbsp;3개월 {m['mom3']:+.2f}%&nbsp;·&nbsp;12개월 {m['mom12']:+.2f}%{vol_txt}</span>
+            f"""<div style="background:{m['bg']};border-radius:12px;padding:14px 20px;margin:4px 0 2px 0;
+display:flex;align-items:center;gap:16px;">
+  <div style="flex:1;min-width:0">
+    <div style="font-size:1.6rem;font-weight:800;color:{m['fg']}">{m['emoji']} 서울 부동산 <u>{m['status']}</u></div>
+    <div style="font-size:1.0rem;color:{m['fg']};margin-top:2px">
+      매매지수 <b>{m['cur']:.1f}</b>&nbsp;·&nbsp;전월 {m['mom1']:+.2f}%&nbsp;·&nbsp;3개월 {m['mom3']:+.2f}%&nbsp;·&nbsp;12개월 {m['mom12']:+.2f}%{vol_txt}
+    </div>
+  </div>
+  <div style="flex:0 0 auto">{spark}</div>
 </div>""",
             unsafe_allow_html=True,
         )
-        st.plotly_chart(_sparkline(m["times"], m["vals"], m["fg"]),
-                        use_container_width=True, config={"displayModeBar": False})
         st.caption(
-            f"기준: {m['src']} · {m['time']} · 역대최고 대비 {m['dd']:+.1f}% "
-            f"· 판정: 최근 3개월 {m['mom3']:+.2f}% (≥+0.5% 상승 / ≤−0.5% 하락 / 그 사이 보합)"
+            f"기준: {m['src']} · {m['time']} · 역대최고 대비 {m['dd']:+.1f}% · "
+            f"추세선: 최근 3년 · 판정: 최근 3개월 {m['mom3']:+.2f}% (≥+0.5% 상승 / ≤−0.5% 하락 / 그 사이 보합)"
         )
 
 

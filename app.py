@@ -81,15 +81,11 @@ with st.sidebar:
     start = st.text_input("시작 기간 (YYYYMM)", "201501")
     end = st.text_input("종료 기간 (YYYYMM)", "")
     only_gu = st.checkbox("서울 25개 자치구만", value=True)
-    run = st.button("데이터 불러오기", type="primary")
+    if st.button("🔄 새로고침 (최신 데이터 다시 받기)"):
+        st.cache_data.clear()
+        st.rerun()
 
-if run:
-    st.session_state["loaded"] = True
-
-if not st.session_state.get("loaded"):
-    st.info("좌측에서 인증키 환경변수(REB_API_KEY) 설정 후 **데이터 불러오기**를 누르세요.")
-    st.stop()
-
+# 페이지를 열면 자동으로 불러온다 (버튼 불필요). 결과는 6시간 캐시.
 try:
     rows = load_rows(statbl_id, dtacycle, start, end)
 except RebApiError as exc:

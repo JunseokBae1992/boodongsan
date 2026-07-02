@@ -86,20 +86,43 @@ def seoul_market(df: pd.DataFrame) -> dict:
     else:
         status, emoji, bg, fg = "보합", "⏸️", "#eef0f2", "#566573"
     return dict(cur=cur, mom1=mom1, mom3=mom3, mom6=mom6, mom12=mom12, dd=dd,
-                status=status, emoji=emoji, bg=bg, fg=fg, src=src, time=str(times[-1]))
+                status=status, emoji=emoji, bg=bg, fg=fg, src=src, time=str(times[-1]),
+                vals=list(map(float, vals)), times=[str(t) for t in times])
 
 
-def render_market_banner(slot, df: pd.DataFrame) -> None:
+def _sparkline(times, vals, color, months=60):
+    """배너용 미니 추세선(축·범례 없이 선만)."""
+    t = pd.to_datetime(pd.Series(times), format="%Y%m", errors="coerce")
+    s = pd.DataFrame({"t": t, "v": vals}).dropna().tail(months)
+    fig = px.line(s, x="t", y="v")
+    fig.update_traces(line_color=color, line_width=2.5,
+                      hovertemplate="%{x|%Y-%m}: %{y:.1f}<extra></extra>")
+    fig.update_layout(height=90, margin=dict(l=0, r=0, t=4, b=0),
+                      xaxis=dict(visible=False), yaxis=dict(visible=False),
+                      showlegend=False, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
+    return fig
+
+
+def render_market_banner(slot, df: pd.DataFrame, vol_series=None) -> None:
     m = seoul_market(df)
+    vol_txt = ""
+    if vol_series is not None:
+        vvals, vtimes = vol_series
+        if len(vvals) > 1:
+            vmom3 = _pct(vvals, 3)
+            arrow = "▲증가" if vmom3 > 3 else ("▼감소" if vmom3 < -3 else "─보합")
+            vol_txt = f"&nbsp;·&nbsp;거래량 3개월 {vmom3:+.0f}% ({arrow})"
     with slot:
         st.markdown(
             f"""<div style="background:{m['bg']};border-radius:12px;padding:16px 20px;margin:4px 0 2px 0;">
 <span style="font-size:1.7rem;font-weight:800;color:{m['fg']}">{m['emoji']} 서울 부동산 <u>{m['status']}</u></span>
 <span style="float:right;font-size:1.05rem;color:{m['fg']};line-height:2.4rem">
-매매지수 <b>{m['cur']:.1f}</b>&nbsp;·&nbsp;전월 {m['mom1']:+.2f}%&nbsp;·&nbsp;3개월 {m['mom3']:+.2f}%&nbsp;·&nbsp;12개월 {m['mom12']:+.2f}%</span>
+매매지수 <b>{m['cur']:.1f}</b>&nbsp;·&nbsp;전월 {m['mom1']:+.2f}%&nbsp;·&nbsp;3개월 {m['mom3']:+.2f}%&nbsp;·&nbsp;12개월 {m['mom12']:+.2f}%{vol_txt}</span>
 </div>""",
             unsafe_allow_html=True,
         )
+        st.plotly_chart(_sparkline(m["times"], m["vals"], m["fg"]),
+                        use_container_width=True, config={"displayModeBar": False})
         st.caption(
             f"기준: {m['src']} · {m['time']} · 역대최고 대비 {m['dd']:+.1f}% "
             f"· 판정: 최근 3개월 {m['mom3']:+.2f}% (≥+0.5% 상승 / ≤−0.5% 하락 / 그 사이 보합)"
@@ -115,6 +138,20 @@ def load_rows(statbl_id: str, dtacycle: str, start: str, end: str) -> list[dict]
         start_wrttime=start or None,
         end_wrttime=end or None,
     )
+
+
+def style_highlight_total(frame: pd.DataFrame):
+    """'서울 전체' 행을 노란 배경 + 굵게 강조한 Styler 반환."""
+    def _hl(row):
+        if str(row.get("region", "")) == "서울 전체":
+            return ["background-color: rgba(255,193,7,0.25); font-weight:700"] * len(row)
+        return [""] * len(row)
+    return frame.style.apply(_hl, axis=1)
+
+
+def bar_colors(regions) -> list[str]:
+    """서울 전체는 금색, 나머지 자치구는 파란색."""
+    return ["#f1c40f" if str(r) == "서울 전체" else "#4C78A8" for r in regions]
 
 
 def appeal_label(recovery_pct: float) -> str:
@@ -171,6 +208,10 @@ with st.sidebar:
                                  help="MM=월, QY=분기, YY=연")
         start = st.text_input("시작 기간 (YYYYMM)", "201501")
         end = st.text_input("종료 기간 (YYYYMM)", "")
+        vol_statbl = st.text_input(
+            "거래량 STATBL_ID (선택)", "",
+            help="서울 아파트 매매 거래량 통계표 코드를 넣으면 시황 배너에 거래량이 함께 표시됩니다. "
+                 "코드는 로컬에서 `python discover.py tables` 로 확인하세요. 비우면 미사용.")
 
 # 페이지를 열면 자동으로 불러온다 (버튼 불필요). 결과는 6시간 캐시.
 try:
@@ -205,8 +246,19 @@ if only_gu:
         st.warning("서울 자치구 데이터가 없습니다. '서울 25개 자치구만' 체크를 해제하고 지역명을 확인하세요.")
         st.stop()
 
+# 거래량(선택): 코드가 입력되면 서울 거래량 시계열을 가져옴
+vol_series = None
+if vol_statbl.strip():
+    try:
+        vrows = load_rows(vol_statbl.strip(), dtacycle, start, end)
+        if vrows:
+            vvals, vtimes, _ = _seoul_series(rows_to_frame(vrows))
+            vol_series = (list(map(float, vvals)), [str(t) for t in vtimes])
+    except RebApiError:
+        vol_series = None
+
 # 코스피 지수처럼 맨 위에 서울 시황 배너 표시
-render_market_banner(market_slot, df)
+render_market_banner(market_slot, df, vol_series=vol_series)
 
 # ── 진단 (값이 이상할 때 원본 확인) ────────────────────────
 with st.expander("🔍 진단 — 원본 데이터/항목 확인"):
@@ -352,7 +404,7 @@ with tab_rank:
     view.index = view.index + 1  # 순위 1부터
 
     st.dataframe(
-        view,
+        style_highlight_total(view),
         use_container_width=True,
         column_config={
             "region": st.column_config.TextColumn("지역"),
@@ -388,6 +440,7 @@ with tab_rank:
 
 # ── 차트 탭 (가로 막대: 25개 구도 읽기 편함) ────────────────
 with tab_chart:
+    st.caption("🟡 금색 막대 = 서울 전체(평균) 벤치마크, 🔵 파란 막대 = 자치구")
     c1, c2 = st.columns(2)
     with c1:
         st.markdown("**저점 대비 반등폭** (바닥에서 얼마나 올랐나)")
@@ -395,7 +448,8 @@ with tab_chart:
         fig = px.bar(d, x="rise_from_trough_pct", y="region", orientation="h",
                      labels={"region": "", "rise_from_trough_pct": "반등(%)"},
                      text="rise_from_trough_pct")
-        fig.update_traces(texttemplate="%{text:.1f}", textposition="outside")
+        fig.update_traces(texttemplate="%{text:.1f}", textposition="outside",
+                          marker_color=bar_colors(d["region"]))
         fig.update_layout(height=650, margin=dict(l=10, r=10, t=10, b=10))
         st.plotly_chart(fig, use_container_width=True)
     with c2:
@@ -404,7 +458,8 @@ with tab_chart:
         fig2 = px.bar(d2, x="recovery_from_peak_pct", y="region", orientation="h",
                       labels={"region": "", "recovery_from_peak_pct": "전고점 대비 수준(%)"},
                       text="recovery_from_peak_pct")
-        fig2.update_traces(texttemplate="%{text:.1f}", textposition="outside")
+        fig2.update_traces(texttemplate="%{text:.1f}", textposition="outside",
+                           marker_color=bar_colors(d2["region"]))
         fig2.add_vline(x=100, line_dash="dash", line_color="red")
         fig2.update_layout(height=650, margin=dict(l=10, r=10, t=10, b=10))
         st.plotly_chart(fig2, use_container_width=True)
@@ -421,6 +476,11 @@ with tab_trend:
         x_col = "날짜" if sub["날짜"].notna().all() else "time"
         line = px.line(sub, x=x_col, y="value", color="region",
                        labels={x_col: "기간", "value": "지수", "region": "지역"})
+        # 서울 전체는 굵은 검은 선으로 강조
+        for tr in line.data:
+            if tr.name == "서울 전체":
+                tr.line.width = 4
+                tr.line.color = "#111111"
         line.update_layout(height=450, legend_title_text="지역")
         st.plotly_chart(line, use_container_width=True)
 

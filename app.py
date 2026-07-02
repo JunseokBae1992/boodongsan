@@ -318,9 +318,12 @@ with tab_trend:
     default = list(stats.head(5)["region"]) if not stats.empty else regions[:5]
     picked = st.multiselect("지역 선택 (여러 개 비교 가능)", regions, default=default)
     if picked:
-        sub = df[df["region"].isin(picked)]
-        line = px.line(sub, x="time", y="value", color="region",
-                       labels={"time": "기간", "value": "지수", "region": "지역"})
+        sub = df[df["region"].isin(picked)].copy()
+        # "YYYYMM" 문자열 -> 실제 날짜로 변환(월 간격이 균등해지고 축이 날짜로 표시됨)
+        sub["날짜"] = pd.to_datetime(sub["time"], format="%Y%m", errors="coerce")
+        x_col = "날짜" if sub["날짜"].notna().all() else "time"
+        line = px.line(sub, x=x_col, y="value", color="region",
+                       labels={x_col: "기간", "value": "지수", "region": "지역"})
         line.update_layout(height=450, legend_title_text="지역")
         st.plotly_chart(line, use_container_width=True)
 

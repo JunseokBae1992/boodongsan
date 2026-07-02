@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import streamlit as st
@@ -40,6 +41,69 @@ if not os.environ.get("REB_API_KEY"):
 st.set_page_config(page_title="서울 자치구 부동산 지수", layout="wide")
 st.title("🏙️ 서울 자치구별 부동산 지수 분석")
 st.caption("출처: 한국부동산원 R-ONE 부동산통계 OpenAPI · (월) 아파트 매매가격지수")
+
+# 코스피처럼 맨 위에 표시할 '시황' 배너 자리 (데이터 로딩 후 채움)
+market_slot = st.container()
+
+
+def _pct(vals, n: int) -> float:
+    if len(vals) <= n or vals[-1 - n] == 0:
+        return 0.0
+    return (vals[-1] / vals[-1 - n] - 1) * 100
+
+
+def _seoul_series(df: pd.DataFrame):
+    """서울 시황용 시계열(월별 값) + 출처 라벨. 옵션과 무관하게 서울 기준."""
+    def only_seoul(sub):
+        if "region_full" in df.columns:
+            sub = sub[sub["region"].eq("서울 전체")
+                      | sub["region_full"].astype(str).str.contains("서울", na=False)]
+        return sub
+    # 1) '서울 전체' 라벨 → 2) 원본 '서울/서울특별시' → 3) 서울 자치구 평균
+    for names, label in [({"서울 전체"}, "서울 전체"),
+                         ({"서울", "서울특별시"}, "서울 전체"),
+                         (set(SEOUL_GU), "서울 구 평균")]:
+        sub = only_seoul(df[df["region"].isin(names)])
+        if not sub.empty:
+            g = sub.groupby("time")["value"].mean().sort_index()
+            return g.to_numpy(float), g.index.to_numpy(), label
+    g = df.groupby("time")["value"].mean().sort_index()
+    return g.to_numpy(float), g.index.to_numpy(), "전체 평균"
+
+
+def seoul_market(df: pd.DataFrame) -> dict:
+    """서울 시계열로 시황(상승/보합/하락) 판정."""
+    vals, times, src = _seoul_series(df)
+    cur = float(vals[-1])
+    mom1, mom3, mom6, mom12 = _pct(vals, 1), _pct(vals, 3), _pct(vals, 6), _pct(vals, 12)
+    ath = float(np.maximum.accumulate(vals)[-1])
+    dd = (cur / ath - 1) * 100 if ath else 0.0
+    # 최근 3개월 모멘텀으로 판정 (상승=빨강, 하락=파랑: 국내 증시 관행)
+    if mom3 >= 0.5:
+        status, emoji, bg, fg = "상승장", "📈", "#fdeceb", "#c0392b"
+    elif mom3 <= -0.5:
+        status, emoji, bg, fg = "하락장", "📉", "#eaf1fb", "#2471a3"
+    else:
+        status, emoji, bg, fg = "보합", "⏸️", "#eef0f2", "#566573"
+    return dict(cur=cur, mom1=mom1, mom3=mom3, mom6=mom6, mom12=mom12, dd=dd,
+                status=status, emoji=emoji, bg=bg, fg=fg, src=src, time=str(times[-1]))
+
+
+def render_market_banner(slot, df: pd.DataFrame) -> None:
+    m = seoul_market(df)
+    with slot:
+        st.markdown(
+            f"""<div style="background:{m['bg']};border-radius:12px;padding:16px 20px;margin:4px 0 2px 0;">
+<span style="font-size:1.7rem;font-weight:800;color:{m['fg']}">{m['emoji']} 서울 부동산 <u>{m['status']}</u></span>
+<span style="float:right;font-size:1.05rem;color:{m['fg']};line-height:2.4rem">
+매매지수 <b>{m['cur']:.1f}</b>&nbsp;·&nbsp;전월 {m['mom1']:+.2f}%&nbsp;·&nbsp;3개월 {m['mom3']:+.2f}%&nbsp;·&nbsp;12개월 {m['mom12']:+.2f}%</span>
+</div>""",
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            f"기준: {m['src']} · {m['time']} · 역대최고 대비 {m['dd']:+.1f}% "
+            f"· 판정: 최근 3개월 {m['mom3']:+.2f}% (≥+0.5% 상승 / ≤−0.5% 하락 / 그 사이 보합)"
+        )
 
 
 @st.cache_data(ttl=60 * 60 * 6, show_spinner=True)
@@ -137,6 +201,9 @@ if only_gu:
     if df.empty:
         st.warning("서울 자치구 데이터가 없습니다. '서울 25개 자치구만' 체크를 해제하고 지역명을 확인하세요.")
         st.stop()
+
+# 코스피 지수처럼 맨 위에 서울 시황 배너 표시
+render_market_banner(market_slot, df)
 
 # ── 진단 (값이 이상할 때 원본 확인) ────────────────────────
 with st.expander("🔍 진단 — 원본 데이터/항목 확인"):

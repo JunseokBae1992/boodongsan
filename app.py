@@ -66,8 +66,12 @@ def appeal_label(recovery_pct: float) -> str:
     return "🔵 저가 메리트 큼"
 
 
-def filter_seoul_gu(df: pd.DataFrame) -> pd.DataFrame:
-    """서울 25개 자치구만. 동명 타지역 구(예: 부산 강서구)를 전체분류명으로 배제."""
+SEOUL_TOTAL_NAMES = {"서울", "서울특별시"}
+SEOUL_TOTAL_LABEL = "서울 전체"
+
+
+def filter_seoul_gu(df: pd.DataFrame, include_total: bool = True) -> pd.DataFrame:
+    """서울 25개 자치구(+선택 시 서울 전체). 동명 타지역 구는 전체분류명으로 배제."""
     if df.empty:
         return df
     gu_set = set(SEOUL_GU)
@@ -76,7 +80,14 @@ def filter_seoul_gu(df: pd.DataFrame) -> pd.DataFrame:
     base = df[has_seoul] if has_seoul.any() else df
     # 2) 짧은 이름이 서울 자치구인 것만
     out = base[base["region"].isin(gu_set)].copy()
-    # 3) 안전장치: (지역, 월) 중복 제거 -> 톱니형 왜곡 방지
+    # 3) 서울 전체 집계 행 추가 (벤치마크용)
+    if include_total:
+        is_total = base["region"].isin(SEOUL_TOTAL_NAMES) | base["region_full"].isin(SEOUL_TOTAL_NAMES)
+        total = base[is_total].copy()
+        if not total.empty:
+            total["region"] = SEOUL_TOTAL_LABEL
+            out = pd.concat([total, out], ignore_index=True)
+    # 4) 안전장치: (지역, 월) 중복 제거 -> 톱니형 왜곡 방지
     out = out.drop_duplicates(subset=["region", "time"], keep="first")
     return out
 
@@ -89,6 +100,7 @@ with st.sidebar:
     start = st.text_input("시작 기간 (YYYYMM)", "201501")
     end = st.text_input("종료 기간 (YYYYMM)", "")
     only_gu = st.checkbox("서울 25개 자치구만", value=True)
+    include_total = st.checkbox("서울 전체(평균) 포함", value=True)
     if st.button("🔄 새로고침 (최신 데이터 다시 받기)"):
         st.cache_data.clear()
         st.rerun()
@@ -121,7 +133,7 @@ if df.empty:
     st.stop()
 
 if only_gu:
-    df = filter_seoul_gu(df)
+    df = filter_seoul_gu(df, include_total=include_total)
     if df.empty:
         st.warning("서울 자치구 데이터가 없습니다. '서울 25개 자치구만' 체크를 해제하고 지역명을 확인하세요.")
         st.stop()
@@ -151,16 +163,19 @@ with st.expander("🔍 진단 — 원본 데이터/항목 확인"):
 stats = compute_all(df)
 stats["appeal"] = stats["recovery_from_peak_pct"].map(appeal_label)
 
+# 서울 전체(집계)는 KPI '구 개수'/매수 후보 계산에서 제외, 표·차트엔 포함
+gu_stats = stats[stats["region"] != SEOUL_TOTAL_LABEL]
+
 # ── 상단 요약 KPI ─────────────────────────────────────────
 base_month = stats["current_time"].max() if not stats.empty else "-"
-top_rise = stats.iloc[0] if not stats.empty else None
+top_rise = gu_stats.iloc[0] if not gu_stats.empty else None
 # 저가 메리트 = 전고점 대비 수준이 가장 낮은(제일 싼) 구
-cheapest = stats.sort_values("recovery_from_peak_pct").iloc[0] if not stats.empty else None
+cheapest = gu_stats.sort_values("recovery_from_peak_pct").iloc[0] if not gu_stats.empty else None
 
-n_breakout = int((stats["status"] == "전고점 돌파").sum()) if not stats.empty else 0
+n_breakout = int((gu_stats["status"] == "전고점 돌파").sum())
 k1, k2, k3, k4 = st.columns(4)
 k1.metric("기준월", str(base_month))
-k2.metric("전고점 돌파(고가 부담)", f"{n_breakout} / {len(stats)}개 구")
+k2.metric("전고점 돌파(고가 부담)", f"{n_breakout} / {len(gu_stats)}개 구")
 if top_rise is not None:
     k3.metric("반등 1위(저점대비)", top_rise["region"], f"+{top_rise['rise_from_trough_pct']:.1f}%")
 if cheapest is not None:
@@ -186,8 +201,8 @@ with tab_buy:
         "**3/6/12개월**: 최근 모멘텀(마이너스=하락, 0 근처=바닥 신호)."
     )
 
-    # 국면 분포 요약
-    phase_counts = stats["phase"].value_counts()
+    # 국면 분포 요약 (구 기준)
+    phase_counts = gu_stats["phase"].value_counts()
     pc = st.columns(5)
     for i, ph in enumerate(["고점권", "하락 중", "바닥권", "상승 중", "보합"]):
         pc[i].metric(PHASE_EMOJI[ph], f"{int(phase_counts.get(ph, 0))}개 구")
@@ -202,7 +217,7 @@ with tab_buy:
     require_stall = cc2.checkbox("하락이 멈춘 구만 (3개월 변동률 ≥ -0.3%)", value=True,
                                  help="계속 떨어지는 중이면 '떨어지는 칼날'. 하락이 멈춘 구만 보려면 체크")
 
-    cand = stats.copy()
+    cand = gu_stats.copy()  # 서울 전체(집계) 제외
     cand = cand[cand["cur_drawdown_pct"] <= -target_dd]
     if require_stall:
         cand = cand[cand["mom_3m_pct"] >= -0.3]

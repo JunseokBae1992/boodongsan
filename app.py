@@ -158,16 +158,19 @@ def filter_seoul_gu(df: pd.DataFrame, include_total: bool = True) -> pd.DataFram
 
 with st.sidebar:
     st.header("설정")
-    statbl_id = st.text_input("STATBL_ID", DEFAULT_STATBL_ID,
-                              help="(월) 매매가격지수_아파트 = A_2024_00045")
-    dtacycle = st.text_input("DTACYCLE_CD", DEFAULT_DTACYCLE_CD, help="MM=월, QY=분기, YY=연")
-    start = st.text_input("시작 기간 (YYYYMM)", "201501")
-    end = st.text_input("종료 기간 (YYYYMM)", "")
-    only_gu = st.checkbox("서울 25개 자치구만", value=True)
-    include_total = st.checkbox("서울 전체(평균) 포함", value=True)
     if st.button("🔄 새로고침 (최신 데이터 다시 받기)"):
         st.cache_data.clear()
         st.rerun()
+    only_gu = st.checkbox("서울 25개 자치구만", value=True)
+    include_total = st.checkbox("서울 전체(평균) 포함", value=True)
+
+    with st.expander("⚙️ 고급 설정 (평소엔 안 건드려도 됨)"):
+        statbl_id = st.text_input("STATBL_ID (통계표 코드)", DEFAULT_STATBL_ID,
+                                  help="(월) 매매가격지수_아파트 = A_2024_00045")
+        dtacycle = st.text_input("DTACYCLE_CD (주기)", DEFAULT_DTACYCLE_CD,
+                                 help="MM=월, QY=분기, YY=연")
+        start = st.text_input("시작 기간 (YYYYMM)", "201501")
+        end = st.text_input("종료 기간 (YYYYMM)", "")
 
 # 페이지를 열면 자동으로 불러온다 (버튼 불필요). 결과는 6시간 캐시.
 try:

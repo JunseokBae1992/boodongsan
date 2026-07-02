@@ -22,7 +22,10 @@ import pandas as pd
 # R-ONE row 에서 기간/값 후보 키 (응답 표기 변동 대비)
 TIME_KEYS = ["WRTTIME_IDTFR_ID", "WRTTIME_DESC", "WRTTIME"]
 VALUE_KEYS = ["DTA_VAL", "DTA_VAL1", "VALUE"]
-CLS_NAME_KEYS = ["CLS_NM", "CLS_FULLNM", "GRP_NM"]
+CLS_NAME_KEYS = ["CLS_NM", "GRP_NM"]
+# 전체 분류명(상위 시/도 포함) - 동명 자치구(예: 서울/부산 강서구) 구분용
+CLS_FULL_KEYS = ["CLS_FULLNM", "CLS_FULL_NM", "GRP_FULLNM", "CLASS_FULLNM"]
+CLS_ID_KEYS = ["CLS_ID", "GRP_ID"]
 
 STATUS_BREAKOUT = "전고점 돌파"
 STATUS_RECOVERING = "회복 진행중"
@@ -94,14 +97,21 @@ def _first_key(row: dict, keys: list[str]) -> str | None:
 
 
 def rows_to_frame(rows: list[dict]) -> pd.DataFrame:
-    """API row 리스트 -> [region, time, value] 정규화 DataFrame."""
+    """API row 리스트 -> [region, region_full, cls_id, time, value] 정규화 DataFrame.
+
+    region       : 짧은 자치구명(표시용, 예: '강서구')
+    region_full  : 상위 시/도 포함 전체 분류명(예: '서울특별시 강서구'). 동명 구 구분용.
+    cls_id       : 분류 코드(있으면). 동명 구 최종 구분용.
+    """
     if not rows:
-        return pd.DataFrame(columns=["region", "time", "value"])
+        return pd.DataFrame(columns=["region", "region_full", "cls_id", "time", "value"])
 
     sample = rows[0]
     tkey = _first_key(sample, TIME_KEYS)
     vkey = _first_key(sample, VALUE_KEYS)
     ckey = _first_key(sample, CLS_NAME_KEYS)
+    fkey = _first_key(sample, CLS_FULL_KEYS)   # 없을 수 있음
+    ikey = _first_key(sample, CLS_ID_KEYS)     # 없을 수 있음
     if not (tkey and vkey and ckey):
         raise ValueError(
             f"행에서 기간/값/지역 컬럼을 찾지 못했습니다. 키: {list(sample.keys())}"
@@ -113,11 +123,18 @@ def rows_to_frame(rows: list[dict]) -> pd.DataFrame:
             value = float(r[vkey])
         except (TypeError, ValueError):
             continue
-        records.append({"region": r[ckey], "time": str(r[tkey]), "value": value})
+        region = str(r[ckey])
+        records.append({
+            "region": region,
+            "region_full": str(r[fkey]) if fkey and r.get(fkey) else region,
+            "cls_id": str(r[ikey]) if ikey and r.get(ikey) else "",
+            "time": str(r[tkey]),
+            "value": value,
+        })
 
     df = pd.DataFrame.from_records(records)
     if not df.empty:
-        df = df.sort_values(["region", "time"]).reset_index(drop=True)
+        df = df.sort_values(["region_full", "time"]).reset_index(drop=True)
     return df
 
 

@@ -67,10 +67,18 @@ def appeal_label(recovery_pct: float) -> str:
 
 
 def filter_seoul_gu(df: pd.DataFrame) -> pd.DataFrame:
+    """서울 25개 자치구만. 동명 타지역 구(예: 부산 강서구)를 전체분류명으로 배제."""
     if df.empty:
         return df
-    mask = df["region"].apply(lambda x: any(gu in str(x) for gu in SEOUL_GU))
-    return df[mask].copy()
+    gu_set = set(SEOUL_GU)
+    # 1) 전체분류명에 '서울'이 있으면 그 행만 (부산/대구 등 동명 구 제거)
+    has_seoul = df["region_full"].astype(str).str.contains("서울", na=False)
+    base = df[has_seoul] if has_seoul.any() else df
+    # 2) 짧은 이름이 서울 자치구인 것만
+    out = base[base["region"].isin(gu_set)].copy()
+    # 3) 안전장치: (지역, 월) 중복 제거 -> 톱니형 왜곡 방지
+    out = out.drop_duplicates(subset=["region", "time"], keep="first")
+    return out
 
 
 with st.sidebar:
@@ -127,6 +135,10 @@ with st.expander("🔍 진단 — 원본 데이터/항목 확인"):
     )
     if item_names:
         st.caption(f"표에 포함된 항목(ITM_NM): {item_names}")
+    if rows:
+        st.caption(f"원본 필드: {list(rows[0].keys())}")
+        if "region_full" in df:
+            st.caption(f"전체분류명 예시: {sorted(df['region_full'].unique())[:5]}")
     rsel = st.selectbox("지역 원본 보기", sorted(df["region"].unique()))
     rd = df[df["region"] == rsel].sort_values("time").reset_index(drop=True)
     hi = rd.loc[rd["value"].idxmax()]

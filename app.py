@@ -121,10 +121,11 @@ def render_market_banner(slot, df: pd.DataFrame, vol_series=None) -> None:
     vol_txt = ""
     if vol_series is not None:
         vvals, _vtimes = vol_series
-        if len(vvals) > 1:
-            vmom3 = _pct(vvals, 3)
-            arrow = "▲증가" if vmom3 > 3 else ("▼감소" if vmom3 < -3 else "─보합")
-            vol_txt = f"&nbsp;·&nbsp;거래량 3개월 {vmom3:+.0f}% ({arrow})"
+        # 거래량은 계절성이 커서 전년 동월 대비(YoY)로 비교
+        if len(vvals) > 12:
+            vyoy = _pct(vvals, 12)
+            arrow = "▲증가" if vyoy > 5 else ("▼감소" if vyoy < -5 else "─비슷")
+            vol_txt = f"&nbsp;·&nbsp;거래량 전년比 {vyoy:+.0f}% ({arrow})"
     spark = _svg_sparkline(m["vals"], m["fg"])
     with slot:
         st.markdown(

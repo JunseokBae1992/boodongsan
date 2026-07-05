@@ -110,6 +110,7 @@ class RebClient:
             base["ITM_ID"] = itm_id
 
         all_rows: list[dict] = []
+        seen: set = set()
         total: int | None = None
         for pindex in range(1, max_pages + 1):
             params = {**base, "pIndex": pindex, "pSize": page_size}
@@ -117,12 +118,20 @@ class RebClient:
             rows = _extract_rows(data)
             if not rows:
                 break
-            all_rows.extend(rows)
+            # 새 행만 누적 (일부 표는 pIndex를 무시하고 같은 페이지를 반복 반환하므로,
+            # 새로 추가되는 행이 없으면 중단해 무한 루프/과도한 요청을 막는다)
+            new = 0
+            for r in rows:
+                key = (r.get("WRTTIME_IDTFR_ID"), r.get("CLS_ID"), r.get("ITM_ID"))
+                if key not in seen:
+                    seen.add(key)
+                    all_rows.append(r)
+                    new += 1
             if total is None:
                 total = _total_count(data)
             if total is not None and len(all_rows) >= total:
                 break
-            if len(rows) < page_size:
+            if len(rows) < page_size or new == 0:
                 break
         return all_rows
 

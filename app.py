@@ -264,10 +264,13 @@ if only_gu:
         st.stop()
 
 # 거래량(선택): 코드가 입력되면 서울 거래량 시계열을 가져옴
+# (거래량은 배너 모멘텀용이라 최근 몇 년만 받아 로딩을 가볍게 한다)
 vol_series = None
 if vol_statbl.strip():
     try:
-        vrows = load_rows(vol_statbl.strip(), dtacycle, start, end)
+        _maxt = str(df["time"].max())
+        vol_start = f"{int(_maxt[:4]) - 3}{_maxt[4:]}" if len(_maxt) >= 6 and _maxt[:4].isdigit() else start
+        vrows = load_rows(vol_statbl.strip(), dtacycle, vol_start, end)
         if vrows:
             # 항목(건수/면적 등)이 섞이면 단위 혼합을 막기 위해 하나만 선택
             vitems = sorted({str(r.get("ITM_NM", "")) for r in vrows if r.get("ITM_NM")})

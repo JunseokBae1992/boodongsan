@@ -147,7 +147,8 @@ display:flex;align-items:center;gap:16px;">
         )
 
 
-@st.cache_data(ttl=60 * 60 * 6, show_spinner=True)
+# 과거 지수는 바뀌지 않으므로 디스크에 캐시(앱이 잠들었다 깨어나도 유지) + 24시간 TTL
+@st.cache_data(ttl=60 * 60 * 24, show_spinner=True, persist="disk")
 def load_rows(statbl_id: str, dtacycle: str, start: str, end: str) -> list[dict]:
     client = RebClient.from_env()
     return client.fetch_series(

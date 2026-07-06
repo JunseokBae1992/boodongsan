@@ -161,33 +161,77 @@ def _yyyymm_minus(ym: str, months: int) -> str:
     return f"{idx // 12:04d}{idx % 12 + 1:02d}"
 
 
-# 과거 지수는 바뀌지 않으므로 디스크에 캐시(앱이 잠들었다 깨어나도 유지) + 24시간 TTL
+def _row_key(r: dict):
+    return (r.get("WRTTIME_IDTFR_ID"), r.get("CLS_ID"), r.get("ITM_ID"))
+
+
+@st.cache_data(ttl=60 * 60 * 24, persist="disk", show_spinner=False)
+def load_snapshot(statbl_id: str) -> list[dict] | None:
+    """레포에 커밋된 과거 스냅샷 CSV를 즉시 읽는다(없으면 None)."""
+    path = _snapshot_path(statbl_id)
+    if not os.path.exists(path):
+        return None
+    df = pd.read_csv(path, dtype=str, keep_default_na=False, encoding="utf-8-sig")
+    return df.to_dict("records")
+
+
+@st.cache_data(ttl=60 * 60 * 6, show_spinner=False)
+def fetch_recent(statbl_id: str, dtacycle: str, since: str, end: str) -> list[dict]:
+    """API에서 최근 구간만 조회(스냅샷 갱신 + 검증에 공용)."""
+    return RebClient.from_env().fetch_series(
+        statbl_id=statbl_id, dtacycle_cd=dtacycle,
+        start_wrttime=since or None, end_wrttime=end or None)
+
+
 @st.cache_data(ttl=60 * 60 * 24, show_spinner=True, persist="disk")
 def load_rows(statbl_id: str, dtacycle: str, start: str, end: str) -> list[dict]:
-    client = RebClient.from_env()
-    path = _snapshot_path(statbl_id)
-    if os.path.exists(path):
-        # 레포에 커밋된 과거 스냅샷을 즉시 읽고, 최근 몇 달만 API로 갱신(개정 반영)
-        snap = pd.read_csv(path, dtype=str, keep_default_na=False)
-        snap_rows = snap.to_dict("records")
-        last = max((str(r.get("WRTTIME_IDTFR_ID", "")) for r in snap_rows), default="")
-        fresh_start = _yyyymm_minus(last, 6) if len(last) >= 6 else (start or None)
-        try:
-            fresh = client.fetch_series(statbl_id, dtacycle, fresh_start, end or None)
-        except RebApiError:
-            fresh = []
-        merged: dict = {}
-        for r in snap_rows:
-            merged[(r.get("WRTTIME_IDTFR_ID"), r.get("CLS_ID"), r.get("ITM_ID"))] = r
-        for r in fresh:  # 최근분이 스냅샷을 덮어씀(개정치 반영)
-            merged[(r.get("WRTTIME_IDTFR_ID"), r.get("CLS_ID"), r.get("ITM_ID"))] = r
-        return list(merged.values())
-    return client.fetch_series(
-        statbl_id=statbl_id,
-        dtacycle_cd=dtacycle,
-        start_wrttime=start or None,
-        end_wrttime=end or None,
-    )
+    """스냅샷을 즉시 읽고 최근 6개월만 API로 덮어써 최신화."""
+    snap = load_snapshot(statbl_id)
+    if snap is None:
+        return RebClient.from_env().fetch_series(
+            statbl_id=statbl_id, dtacycle_cd=dtacycle,
+            start_wrttime=start or None, end_wrttime=end or None)
+    last = max((str(r.get("WRTTIME_IDTFR_ID", "")) for r in snap), default="")
+    since = _yyyymm_minus(last, 6) if len(last) >= 6 else start
+    try:
+        recent = fetch_recent(statbl_id, dtacycle, since, end)
+    except RebApiError:
+        recent = []
+    merged = {_row_key(r): r for r in snap}
+    for r in recent:  # 최근분이 스냅샷을 덮어씀(개정치 반영)
+        merged[_row_key(r)] = r
+    return list(merged.values())
+
+
+def validate_snapshot(statbl_id: str, dtacycle: str, end: str) -> dict | None:
+    """스냅샷과 최신 API 데이터를 비교(백그라운드 검증). 값 개정/노후 감지."""
+    snap = load_snapshot(statbl_id)
+    if snap is None:
+        return None
+    last = max((str(r.get("WRTTIME_IDTFR_ID", "")) for r in snap), default="")
+    since = _yyyymm_minus(last, 6) if len(last) >= 6 else "200001"
+    try:
+        recent = fetch_recent(statbl_id, dtacycle, since, end)
+    except RebApiError as exc:
+        return {"ok": False, "error": str(exc), "snap_latest": last}
+    snap_val = {_row_key(r): str(r.get("DTA_VAL", "")) for r in snap}
+    overlap = mismatch = new_rows = 0
+    api_latest = ""
+    for r in recent:
+        wt = str(r.get("WRTTIME_IDTFR_ID", ""))
+        api_latest = max(api_latest, wt)
+        k = _row_key(r)
+        if k in snap_val:
+            overlap += 1
+            try:
+                if abs(float(r.get("DTA_VAL")) - float(snap_val[k])) > 0.01:
+                    mismatch += 1
+            except (TypeError, ValueError):
+                pass
+        else:
+            new_rows += 1
+    return {"ok": True, "snap_latest": last, "api_latest": api_latest,
+            "overlap": overlap, "mismatch": mismatch, "new_rows": new_rows}
 
 
 def style_highlight_total(frame: pd.DataFrame):
@@ -337,8 +381,30 @@ with st.sidebar:
 # 코스피 지수처럼 맨 위에 서울 시황 배너 표시
 render_market_banner(market_slot, df, vol_series=vol_series)
 
+# ── 스냅샷 검증 (백그라운드로 최신 API와 대조) ─────────────
+_vs = validate_snapshot(statbl_id, dtacycle, end)
+if _vs is not None:
+    if not _vs.get("ok"):
+        st.caption(f"🛰️ 스냅샷 검증: API 확인 실패({_vs.get('error','')}). 스냅샷으로 표시 중.")
+    elif _vs["mismatch"] > 0:
+        st.warning(
+            f"🛰️ 스냅샷과 최신 데이터가 {_vs['mismatch']}건 달라요 "
+            f"(REB가 과거치를 개정했을 수 있음). 사이드바 '스냅샷 다운로드'로 갱신을 권장합니다. "
+            f"(스냅샷 최신월 {_vs['snap_latest']} · API 최신월 {_vs['api_latest']})"
+        )
+    else:
+        st.caption(
+            f"🛰️ 스냅샷 검증 정상 · 겹치는 {_vs['overlap']}건 값 일치 · "
+            f"신규 {_vs['new_rows']}건 갱신 · 최신월 {_vs['api_latest'] or _vs['snap_latest']}"
+        )
+
 # ── 진단 (값이 이상할 때 원본 확인) ────────────────────────
 with st.expander("🔍 진단 — 원본 데이터/항목 확인"):
+    if _vs is not None and _vs.get("ok"):
+        st.caption(
+            f"스냅샷 최신월 {_vs['snap_latest']} → API 최신월 {_vs['api_latest']} · "
+            f"겹침 {_vs['overlap']}건(불일치 {_vs['mismatch']}) · 신규 {_vs['new_rows']}건"
+        )
     st.caption(
         f"총 {len(rows)}행 · 지역 {df['region'].nunique()}개 · "
         f"기간 {df['time'].min()}~{df['time'].max()}"

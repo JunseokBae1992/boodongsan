@@ -224,7 +224,7 @@ with st.sidebar:
                                   help="(월) 매매가격지수_아파트 = A_2024_00045")
         dtacycle = st.text_input("DTACYCLE_CD (주기)", DEFAULT_DTACYCLE_CD,
                                  help="MM=월, QY=분기, YY=연")
-        start = st.text_input("시작 기간 (YYYYMM)", "201501")
+        start = st.text_input("시작 기간 (YYYYMM)", "201801")
         end = st.text_input("종료 기간 (YYYYMM)", "")
         vol_statbl = st.text_input(
             "거래량 STATBL_ID", "A_2024_00554",

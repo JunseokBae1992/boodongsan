@@ -11,8 +11,10 @@ OpenAPI 안내: https://www.reb.or.kr/r-one/portal/openapi/openApiIntroPage.do
 
 from __future__ import annotations
 
+import math
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Iterable
 
@@ -111,15 +113,8 @@ class RebClient:
 
         all_rows: list[dict] = []
         seen: set = set()
-        total: int | None = None
-        for pindex in range(1, max_pages + 1):
-            params = {**base, "pIndex": pindex, "pSize": page_size}
-            data = self._get("SttsApiTblData.do", params)
-            rows = _extract_rows(data)
-            if not rows:
-                break
-            # 새 행만 누적 (일부 표는 pIndex를 무시하고 같은 페이지를 반복 반환하므로,
-            # 새로 추가되는 행이 없으면 중단해 무한 루프/과도한 요청을 막는다)
+
+        def _add(rows: list[dict]) -> int:
             new = 0
             for r in rows:
                 key = (r.get("WRTTIME_IDTFR_ID"), r.get("CLS_ID"), r.get("ITM_ID"))
@@ -127,12 +122,35 @@ class RebClient:
                     seen.add(key)
                     all_rows.append(r)
                     new += 1
-            if total is None:
-                total = _total_count(data)
-            if total is not None and len(all_rows) >= total:
-                break
-            if len(rows) < page_size or new == 0:
-                break
+            return new
+
+        def _page(pindex: int) -> list[dict]:
+            return _extract_rows(self._get("SttsApiTblData.do",
+                                           {**base, "pIndex": pindex, "pSize": page_size}))
+
+        # 1페이지 먼저 받아 전체 건수(list_total_count)를 파악
+        first = self._get("SttsApiTblData.do", {**base, "pIndex": 1, "pSize": page_size})
+        rows1 = _extract_rows(first)
+        if not rows1:
+            return []
+        _add(rows1)
+        total = _total_count(first)
+        per_page = len(rows1)
+
+        if total and per_page:
+            # 전체 건수를 알면 남은 페이지를 병렬로 동시에 받아 속도를 크게 높인다
+            n_pages = min(math.ceil(total / per_page), max_pages)
+            if n_pages > 1:
+                with ThreadPoolExecutor(max_workers=8) as ex:
+                    for rows in ex.map(_page, range(2, n_pages + 1)):
+                        if rows:
+                            _add(rows)
+        else:
+            # 전체 건수를 모르면 순차 조회 (같은 페이지 반복 시 중단)
+            for pindex in range(2, max_pages + 1):
+                rows = _page(pindex)
+                if not rows or _add(rows) == 0 or len(rows) < page_size:
+                    break
         return all_rows
 
 

@@ -5,3 +5,5 @@ __pycache__/
 venv/
 .streamlit/secrets.toml
 *.csv
+# 스냅샷(과거 데이터)은 커밋해서 첫 로딩을 빠르게 한다
+!data/*.csv

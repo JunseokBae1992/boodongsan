@@ -147,10 +147,41 @@ display:flex;align-items:center;gap:16px;">
         )
 
 
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+
+
+def _snapshot_path(statbl_id: str) -> str:
+    return os.path.join(DATA_DIR, f"{statbl_id}.csv")
+
+
+def _yyyymm_minus(ym: str, months: int) -> str:
+    """YYYYMM 에서 months개월 뺀 값."""
+    y, m = int(ym[:4]), int(ym[4:6])
+    idx = y * 12 + (m - 1) - months
+    return f"{idx // 12:04d}{idx % 12 + 1:02d}"
+
+
 # 과거 지수는 바뀌지 않으므로 디스크에 캐시(앱이 잠들었다 깨어나도 유지) + 24시간 TTL
 @st.cache_data(ttl=60 * 60 * 24, show_spinner=True, persist="disk")
 def load_rows(statbl_id: str, dtacycle: str, start: str, end: str) -> list[dict]:
     client = RebClient.from_env()
+    path = _snapshot_path(statbl_id)
+    if os.path.exists(path):
+        # 레포에 커밋된 과거 스냅샷을 즉시 읽고, 최근 몇 달만 API로 갱신(개정 반영)
+        snap = pd.read_csv(path, dtype=str, keep_default_na=False)
+        snap_rows = snap.to_dict("records")
+        last = max((str(r.get("WRTTIME_IDTFR_ID", "")) for r in snap_rows), default="")
+        fresh_start = _yyyymm_minus(last, 6) if len(last) >= 6 else (start or None)
+        try:
+            fresh = client.fetch_series(statbl_id, dtacycle, fresh_start, end or None)
+        except RebApiError:
+            fresh = []
+        merged: dict = {}
+        for r in snap_rows:
+            merged[(r.get("WRTTIME_IDTFR_ID"), r.get("CLS_ID"), r.get("ITM_ID"))] = r
+        for r in fresh:  # 최근분이 스냅샷을 덮어씀(개정치 반영)
+            merged[(r.get("WRTTIME_IDTFR_ID"), r.get("CLS_ID"), r.get("ITM_ID"))] = r
+        return list(merged.values())
     return client.fetch_series(
         statbl_id=statbl_id,
         dtacycle_cd=dtacycle,
@@ -243,6 +274,8 @@ if not rows:
     st.warning("데이터가 없습니다. STATBL_ID/기간/인증키를 확인하세요.")
     st.stop()
 
+price_rows_raw = list(rows)  # 스냅샷 저장용 원본(항목 필터 전)
+
 # 표에 항목(ITM)이 여러 개면(예: 지수/변동률) 하나만 골라야 지표가 정확하다.
 item_names = sorted({str(r.get("ITM_NM", "")) for r in rows if r.get("ITM_NM")})
 picked_item = None
@@ -268,12 +301,14 @@ if only_gu:
 # 거래량(선택): 코드가 입력되면 서울 거래량 시계열을 가져옴
 # (거래량은 배너 모멘텀용이라 최근 몇 년만 받아 로딩을 가볍게 한다)
 vol_series = None
+vrows_raw: list = []
 if vol_statbl.strip():
     try:
         _maxt = str(df["time"].max())
         vol_start = f"{int(_maxt[:4]) - 3}{_maxt[4:]}" if len(_maxt) >= 6 and _maxt[:4].isdigit() else start
         vrows = load_rows(vol_statbl.strip(), dtacycle, vol_start, end)
         if vrows:
+            vrows_raw = list(vrows)  # 스냅샷 저장용 원본
             # 항목(건수/면적 등)이 섞이면 단위 혼합을 막기 위해 하나만 선택
             vitems = sorted({str(r.get("ITM_NM", "")) for r in vrows if r.get("ITM_NM")})
             if len(vitems) > 1:
@@ -284,6 +319,20 @@ if vol_statbl.strip():
             vol_series = (list(map(float, vvals)), [str(t) for t in vtimes])
     except RebApiError:
         vol_series = None
+
+# 개발용: 현재 받은 데이터를 스냅샷 CSV로 내려받아 레포에 커밋하면 첫 로딩이 빨라짐
+with st.sidebar:
+    with st.expander("📦 스냅샷 다운로드 (개발용)"):
+        st.caption("이 CSV를 받아 개발자에게 전달하면 앱에 내장돼 첫 로딩이 빨라집니다.")
+        st.download_button(
+            f"① 가격 데이터 ({statbl_id}.csv)",
+            pd.DataFrame(price_rows_raw).to_csv(index=False).encode("utf-8-sig"),
+            f"{statbl_id}.csv", "text/csv")
+        if vol_statbl.strip() and vrows_raw:
+            st.download_button(
+                f"② 거래량 데이터 ({vol_statbl.strip()}.csv)",
+                pd.DataFrame(vrows_raw).to_csv(index=False).encode("utf-8-sig"),
+                f"{vol_statbl.strip()}.csv", "text/csv")
 
 # 코스피 지수처럼 맨 위에 서울 시황 배너 표시
 render_market_banner(market_slot, df, vol_series=vol_series)

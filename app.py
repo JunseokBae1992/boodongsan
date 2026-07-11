@@ -306,6 +306,10 @@ with st.sidebar:
             "거래량 STATBL_ID", "A_2024_00554",
             help="기본값 A_2024_00554 = (월) 행정구역별 아파트매매거래현황. "
                  "비우면 거래량 미표시.")
+        sugup_statbl = st.text_input(
+            "매매수급 STATBL_ID", "A_2024_00076",
+            help="기본값 A_2024_00076 = (월) 매매수급동향_아파트(매수우위지수, 100=균형). "
+                 "비우면 미표시.")
 
 # 페이지를 열면 자동으로 불러온다 (버튼 불필요). 결과는 6시간 캐시.
 try:
@@ -364,6 +368,32 @@ if vol_statbl.strip():
     except RebApiError:
         vol_series = None
 
+# 매매수급지수(매수우위): 100=균형, >100 매수세 우위, <100 매도세 우위(매수자 유리)
+sugup = None
+srows_raw: list = []
+if sugup_statbl.strip():
+    try:
+        srows = load_rows(sugup_statbl.strip(), dtacycle, start, end)
+        if srows:
+            srows_raw = list(srows)
+            sitems = sorted({str(r.get("ITM_NM", "")) for r in srows if r.get("ITM_NM")})
+            if len(sitems) > 1:
+                pref = next((n for n in sitems if "수급" in n or "지수" in n), sitems[0])
+                srows = [r for r in srows if str(r.get("ITM_NM", "")) == pref]
+            svals, stimes, _ = _seoul_series(rows_to_frame(srows))
+            if len(svals):
+                cur = float(svals[-1])
+                if cur >= 105:
+                    lab = "🔴 매수세 우위 (매도자 우위·상승 압력)"
+                elif cur >= 95:
+                    lab = "🟡 균형"
+                else:
+                    lab = "🟢 매도세 우위 (매수자 유리·매수 기회)"
+                sugup = {"cur": cur, "time": str(stimes[-1]), "label": lab,
+                         "vals": list(map(float, svals)), "times": [str(t) for t in stimes]}
+    except RebApiError:
+        sugup = None
+
 # 개발용: 현재 받은 데이터를 스냅샷 CSV로 내려받아 레포에 커밋하면 첫 로딩이 빨라짐
 with st.sidebar:
     with st.expander("📦 스냅샷 다운로드 (개발용)"):
@@ -377,6 +407,11 @@ with st.sidebar:
                 f"② 거래량 데이터 ({vol_statbl.strip()}.csv)",
                 pd.DataFrame(vrows_raw).to_csv(index=False).encode("utf-8-sig"),
                 f"{vol_statbl.strip()}.csv", "text/csv")
+        if sugup_statbl.strip() and srows_raw:
+            st.download_button(
+                f"③ 매매수급 데이터 ({sugup_statbl.strip()}.csv)",
+                pd.DataFrame(srows_raw).to_csv(index=False).encode("utf-8-sig"),
+                f"{sugup_statbl.strip()}.csv", "text/csv")
 
 # 코스피 지수처럼 맨 위에 서울 시황 배너 표시
 render_market_banner(market_slot, df, vol_series=vol_series)
@@ -459,6 +494,24 @@ PHASE_EMOJI = {
 }
 with tab_buy:
     st.markdown("#### 다음 하락장 매수 판단")
+
+    # 매매수급지수(매수우위) — 매수/매도 세력 균형 (선행 심리 지표)
+    if sugup is not None:
+        sg1, sg2, sg3 = st.columns([1, 1, 2])
+        sg1.metric("서울 매매수급지수", f"{sugup['cur']:.0f}",
+                   help="100=균형 · >100 매수세 우위(상승 압력) · <100 매도세 우위(매수자 유리)")
+        sg2.markdown(f"### {sugup['label'].split()[0]}")
+        stale = ""
+        if str(base_month) and sugup["time"] < _yyyymm_minus(str(base_month), 3):
+            stale = f" ⚠️ (이 지표는 {sugup['time']} 이후 갱신이 없어요 — REB 조사 중단 가능성)"
+        sg3.markdown(f"**{sugup['label']}**  \n{sugup['time']} 기준{stale}")
+        st.caption(
+            "매매수급지수: 시장에 매수자와 매도자 중 누가 많은지(REB 조사). "
+            "**100 미만이면 매도자가 많아 매수자에게 유리**, 100 초과면 매수세가 강해 가격 상승 압력. "
+            "가격보다 먼저 움직이는 선행 심리 지표입니다."
+        )
+        st.divider()
+
     st.caption(
         "**국면**: 🔴고점권(비쌈) → 📉하락 중 → 🟢바닥권(하락 멈춤, 매수관심) → 📈상승 중. "
         "**현재낙폭**: 지금 역대최고 대비 얼마나 싸졌나. "
